@@ -62,7 +62,12 @@ def _reconnect_redirect(reason: str) -> str:
 async def _provision_or_login_user(userinfo: dict, db):
     """Look up by oauth sub, fall back to email, else create. Never trusts caller-supplied identity beyond `userinfo`."""
     user = await Users.get_user_by_oauth_sub('newapi', userinfo['sub'], db=db)
-    if not user:
+    if not user and await Config.get('oauth.merge_accounts_by_email'):
+        # Mirrors the standard OAuth callback's own check in utils/oauth.py
+        # (OAUTH_MERGE_ACCOUNTS_BY_EMAIL) before linking into an existing,
+        # otherwise-unrelated account by email match. new-api is still the
+        # trusted IdP regardless of this flag — when it's off we simply
+        # provision a fresh account instead, we never deny access.
         existing_by_email = await Users.get_user_by_email(userinfo['email'], db=db)
         if existing_by_email:
             await Users.update_user_oauth_by_id(existing_by_email.id, 'newapi', userinfo['sub'], db=db)

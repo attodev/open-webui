@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport
 from open_webui.internal.db import AsyncSessionLocal
+from open_webui.models.config import Config
 from open_webui.models.users import Users
 from open_webui.utils.newapi_oauth import NewapiOAuthError
 from open_webui.utils.rate_limit import RateLimiter
@@ -151,7 +152,15 @@ async def test_callback_logs_in_existing_user_by_sub(db_engine, async_client):
 
 
 @pytest.mark.asyncio
-async def test_callback_matches_existing_local_account_by_email_when_no_sub_link(db_engine, async_client):
+async def test_callback_matches_existing_local_account_by_email_when_no_sub_link(db_engine, async_client, monkeypatch):
+    """
+    Email-fallback linking only happens when oauth.merge_accounts_by_email
+    is enabled (finding I4) — mirrors the standard OAuth callback's own
+    check in utils/oauth.py. The flag defaults to False, so this "on" case
+    has to enable it explicitly.
+    """
+    monkeypatch.setitem(Config.DEFAULTS, 'oauth.merge_accounts_by_email', True)
+
     app = FastAPI()
     _mount(app)
     async_client._transport = ASGITransport(app=app)
@@ -182,6 +191,63 @@ async def test_callback_matches_existing_local_account_by_email_when_no_sub_link
         assert user.oauth == {'newapi': {'sub': 'newapi-user-carol'}}
         # Only one account for carol@example.com exists.
         assert await Users.get_num_users(db=db) == 1
+
+
+@pytest.mark.asyncio
+async def test_callback_creates_new_user_instead_of_linking_when_merge_by_email_disabled(db_engine, async_client):
+    """
+    Companion to the "on" case above: with oauth.merge_accounts_by_email
+    left at its default (False), a sub-less new-api login whose email
+    matches an existing account must NOT be linked into that account — it
+    should fall through to creating a brand-new user, same as if there had
+    been no email match at all.
+
+    The existing account's email uses different casing from the trip
+    userinfo claim (both refer to "the same" address once lowercased) so
+    that both rows can coexist under the DB's case-sensitive unique
+    constraint on email while still exercising Users.get_user_by_email's
+    case-insensitive match — that's the exact condition finding I4 gates.
+    """
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    async with AsyncSessionLocal() as db:
+        await Users.insert_new_user(
+            id='user-dana', name='Dana', email='Dana@Example.com', role='user', db=db
+        )
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-dana2', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={
+                    'sub': 'newapi-user-dana2',
+                    'email': 'dana@example.com',
+                    'name': 'Dana Two',
+                    'is_admin': False,
+                }
+            ),
+        ),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth'
+
+    async with AsyncSessionLocal() as db:
+        assert await Users.get_num_users(db=db) == 2
+
+        new_user = await Users.get_user_by_oauth_sub('newapi', 'newapi-user-dana2', db=db)
+        assert new_user is not None
+        assert new_user.id != 'user-dana'
+
+        old_user = await Users.get_user_by_id('user-dana', db=db)
+        assert not (old_user.oauth or {}).get('newapi')
 
 
 @pytest.mark.asyncio
