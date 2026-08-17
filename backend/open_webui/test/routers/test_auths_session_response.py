@@ -6,7 +6,7 @@ from open_webui.models.users import Users
 
 
 @pytest.mark.asyncio
-async def test_create_session_response_honors_expires_delta_override(async_db):
+async def test_create_session_response_honors_expires_delta_override(db_engine):
     from fastapi import Request
     from open_webui.internal.db import AsyncSessionLocal
     from open_webui.routers.auths import create_session_response

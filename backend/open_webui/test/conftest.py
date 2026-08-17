@@ -44,16 +44,6 @@ def db_engine():
     Base.metadata.drop_all(bind=engine)
 
 
-@pytest_asyncio.fixture(scope='function')
-async def async_db():
-    """Create every ORM table fresh for each async test, then drop them."""
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield async_engine
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-
 @pytest_asyncio.fixture
 async def async_client(db_engine):
     """An httpx.AsyncClient with no app wired in yet.
