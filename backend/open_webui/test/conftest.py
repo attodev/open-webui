@@ -6,6 +6,11 @@ is imported, because `open_webui.config` reads them at import time (and can
 trigger an Alembic migration run or a hard SystemExit if WEBUI_SECRET_KEY is
 missing). conftest.py module-level code runs before pytest collects any
 test module in this directory, which is what makes this reliable.
+
+DATABASE_URL and ENABLE_DB_MIGRATIONS are unconditionally overridden (not
+setdefault) to ensure test isolation: we always use a temp SQLite db with
+ORM-only schema creation, never the developer's real database or Alembic
+migrations, regardless of ambient shell environment.
 """
 
 import os
@@ -13,10 +18,10 @@ import tempfile
 
 os.environ.setdefault('WEBUI_SECRET_KEY', 'test-secret-key-not-for-production')
 os.environ.setdefault('WEBUI_AUTH', 'True')
-os.environ.setdefault('ENABLE_DB_MIGRATIONS', 'False')  # schema created directly from ORM metadata instead
+os.environ['ENABLE_DB_MIGRATIONS'] = 'False'  # schema created directly from ORM metadata instead
 
 _TMP_DB_DIR = tempfile.mkdtemp(prefix='openwebui-test-db-')
-os.environ.setdefault('DATABASE_URL', f'sqlite:///{_TMP_DB_DIR}/test.db')
+os.environ['DATABASE_URL'] = f'sqlite:///{_TMP_DB_DIR}/test.db'
 
 import pytest
 import pytest_asyncio
