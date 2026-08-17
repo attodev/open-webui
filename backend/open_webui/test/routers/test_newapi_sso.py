@@ -1,3 +1,4 @@
+import logging
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -6,6 +7,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport
 from open_webui.internal.db import AsyncSessionLocal
 from open_webui.models.users import Users
+from open_webui.utils.newapi_oauth import NewapiOAuthError
 
 
 def _mount(app):
@@ -152,3 +154,60 @@ async def test_callback_promotes_existing_user_when_is_admin_claim_present(db_en
     async with AsyncSessionLocal() as db:
         user = await Users.get_user_by_id('user-dave', db=db)
         assert user.role == 'admin'
+
+
+@pytest.mark.parametrize('reason', ['invalid_grant', 'invalid_client', 'network_error', 'invalid_userinfo'])
+@pytest.mark.asyncio
+async def test_callback_redirects_to_reconnect_on_every_error_reason(db_engine, async_client, reason):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with patch(
+        'open_webui.routers.newapi_sso.exchange_code_for_token',
+        new=AsyncMock(side_effect=NewapiOAuthError(reason)),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=bad-code', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == f'/auth?error=newapi_sso_failed&reason={reason}'
+    assert 'token' not in res.cookies
+
+
+@pytest.mark.asyncio
+async def test_callback_logs_invalid_client_as_error_not_info(db_engine, async_client, caplog):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with patch(
+        'open_webui.routers.newapi_sso.exchange_code_for_token',
+        new=AsyncMock(side_effect=NewapiOAuthError('invalid_client')),
+    ):
+        with caplog.at_level(logging.INFO, logger='open_webui.routers.newapi_sso'):
+            await async_client.get('/auth/newapi/callback?code=bad-code', follow_redirects=False)
+
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any('misconfigured' in r.message for r in error_records)
+
+
+@pytest.mark.asyncio
+async def test_callback_never_creates_a_user_on_userinfo_failure(db_engine, async_client):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-x', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(side_effect=NewapiOAuthError('invalid_userinfo')),
+        ),
+    ):
+        await async_client.get('/auth/newapi/callback?code=abc', follow_redirects=False)
+
+    async with AsyncSessionLocal() as db:
+        assert await Users.get_num_users(db=db) == 0
