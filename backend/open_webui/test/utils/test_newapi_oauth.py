@@ -43,7 +43,9 @@ class _CtxManager:
 async def test_exchange_code_for_token_success():
     from open_webui.utils.newapi_oauth import exchange_code_for_token
 
-    fake_session = _FakeSession(_FakeResponse(200, {'access_token': 'sk-abc', 'token_type': 'Bearer', 'expires_in': 86400}))
+    fake_session = _FakeSession(
+        _FakeResponse(200, {'access_token': 'sk-abc', 'token_type': 'Bearer', 'expires_in': 86400})
+    )
     with patch('open_webui.utils.newapi_oauth.get_session', new=AsyncMock(return_value=fake_session)):
         result = await exchange_code_for_token('a-code')
 

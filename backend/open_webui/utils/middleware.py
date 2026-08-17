@@ -3183,9 +3183,7 @@ async def get_system_oauth_token(request, user):
             # LLM-gateway billing credential, not a general OAuth token for
             # calling arbitrary user-scoped APIs, and isn't managed by this
             # oauth_manager either.
-            sessions = [
-                s for s in sessions if not (s.provider or '').startswith('mcp:') and s.provider != 'newapi'
-            ]
+            sessions = [s for s in sessions if not (s.provider or '').startswith('mcp:') and s.provider != 'newapi']
             if sessions:
                 best = max(sessions, key=lambda s: s.updated_at)
                 oauth_token = await request.app.state.oauth_manager.get_oauth_token(

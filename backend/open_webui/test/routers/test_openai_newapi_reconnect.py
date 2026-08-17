@@ -66,8 +66,13 @@ def _fake_user(id='user-1'):
     # needs to exist in app.state.OPENAI_MODELS to resolve a connection),
     # and that access-control policy is out of scope for finding I1.
     return UserModel(
-        id=id, name='Test', email='test@example.com', role='admin',
-        last_active_at=0, updated_at=0, created_at=0,
+        id=id,
+        name='Test',
+        email='test@example.com',
+        role='admin',
+        last_active_at=0,
+        updated_at=0,
+        created_at=0,
     )
 
 
@@ -214,9 +219,7 @@ async def test_chat_completion_passes_through_401_for_non_newapi_session_connect
     with (
         patch(
             'open_webui.routers.openai.get_openai_connection',
-            new=AsyncMock(
-                return_value=('https://api.example.com/v1', 'sk-bad-key', {'auth_type': 'bearer'})
-            ),
+            new=AsyncMock(return_value=('https://api.example.com/v1', 'sk-bad-key', {'auth_type': 'bearer'})),
         ),
         patch('open_webui.routers.openai.get_session', new=AsyncMock(return_value=fake_session)),
     ):

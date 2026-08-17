@@ -416,7 +416,9 @@
 											{/if}
 
 											{#if auth_type === 'newapi_session'}
-												<option value="newapi_session">{$i18n.t('new-api Session (per-user)')}</option>
+												<option value="newapi_session"
+													>{$i18n.t('new-api Session (per-user)')}</option
+												>
 											{/if}
 										</select>
 									</div>

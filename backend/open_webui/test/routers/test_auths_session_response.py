@@ -13,9 +13,7 @@ async def test_create_session_response_honors_expires_delta_override(db_engine):
     from open_webui.utils.auth import decode_token
 
     async with AsyncSessionLocal() as db:
-        user = await Users.insert_new_user(
-            id='user-1', name='Test User', email='test@example.com', role='user', db=db
-        )
+        user = await Users.insert_new_user(id='user-1', name='Test User', email='test@example.com', role='user', db=db)
 
         from fastapi import FastAPI
 
@@ -24,9 +22,7 @@ async def test_create_session_response_honors_expires_delta_override(db_engine):
         request = Request(scope)
 
         before = int(time.time())
-        result = await create_session_response(
-            request, user, db, expires_delta=datetime.timedelta(hours=24)
-        )
+        result = await create_session_response(request, user, db, expires_delta=datetime.timedelta(hours=24))
 
         decoded = decode_token(result['token'])
         assert decoded['exp'] - before == pytest.approx(24 * 3600, abs=5)

@@ -390,7 +390,9 @@
 										</div>
 									{:else if newapiSsoErrorReason === 'rate_limited'}
 										<div class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
-											{$i18n.t('Too many sign-in attempts. Please wait a few minutes and try again.')}
+											{$i18n.t(
+												'Too many sign-in attempts. Please wait a few minutes and try again.'
+											)}
 										</div>
 									{:else if newapiSsoErrorReason === 'server_error'}
 										<div class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">

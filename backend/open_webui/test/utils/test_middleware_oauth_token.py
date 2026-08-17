@@ -43,9 +43,7 @@ async def test_get_system_oauth_token_excludes_newapi_provider_session(db_engine
     from open_webui.utils.middleware import get_system_oauth_token
 
     async with AsyncSessionLocal() as db:
-        user = await Users.insert_new_user(
-            id='user-newapi-only', name='N', email='n@example.com', role='user', db=db
-        )
+        user = await Users.insert_new_user(id='user-newapi-only', name='N', email='n@example.com', role='user', db=db)
         await OAuthSessions.create_session(
             user.id, 'newapi', {'access_token': 'sk-newapi', 'expires_at': int(time.time()) + 3600}, db=db
         )

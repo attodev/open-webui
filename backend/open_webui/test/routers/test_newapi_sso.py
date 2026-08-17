@@ -139,7 +139,12 @@ async def test_callback_success_cookie_is_readable_by_frontend_js(db_engine, asy
         patch(
             'open_webui.routers.newapi_sso.fetch_userinfo',
             new=AsyncMock(
-                return_value={'sub': 'newapi-user-frank', 'email': 'frank@example.com', 'name': 'Frank', 'is_admin': False}
+                return_value={
+                    'sub': 'newapi-user-frank',
+                    'email': 'frank@example.com',
+                    'name': 'Frank',
+                    'is_admin': False,
+                }
             ),
         ),
     ):
@@ -174,7 +179,12 @@ async def test_callback_logs_in_existing_user_by_sub(db_engine, async_client):
         patch(
             'open_webui.routers.newapi_sso.fetch_userinfo',
             new=AsyncMock(
-                return_value={'sub': 'newapi-user-bob', 'email': 'bob-changed@example.com', 'name': 'Bob', 'is_admin': False}
+                return_value={
+                    'sub': 'newapi-user-bob',
+                    'email': 'bob-changed@example.com',
+                    'name': 'Bob',
+                    'is_admin': False,
+                }
             ),
         ),
     ):
@@ -204,9 +214,7 @@ async def test_callback_matches_existing_local_account_by_email_when_no_sub_link
     async_client._transport = ASGITransport(app=app)
 
     async with AsyncSessionLocal() as db:
-        await Users.insert_new_user(
-            id='user-carol', name='Carol', email='carol@example.com', role='user', db=db
-        )
+        await Users.insert_new_user(id='user-carol', name='Carol', email='carol@example.com', role='user', db=db)
 
     with (
         patch(
@@ -216,7 +224,12 @@ async def test_callback_matches_existing_local_account_by_email_when_no_sub_link
         patch(
             'open_webui.routers.newapi_sso.fetch_userinfo',
             new=AsyncMock(
-                return_value={'sub': 'newapi-user-carol', 'email': 'carol@example.com', 'name': 'Carol', 'is_admin': False}
+                return_value={
+                    'sub': 'newapi-user-carol',
+                    'email': 'carol@example.com',
+                    'name': 'Carol',
+                    'is_admin': False,
+                }
             ),
         ),
     ):
@@ -251,9 +264,7 @@ async def test_callback_creates_new_user_instead_of_linking_when_merge_by_email_
     async_client._transport = ASGITransport(app=app)
 
     async with AsyncSessionLocal() as db:
-        await Users.insert_new_user(
-            id='user-dana', name='Dana', email='Dana@Example.com', role='user', db=db
-        )
+        await Users.insert_new_user(id='user-dana', name='Dana', email='Dana@Example.com', role='user', db=db)
 
     with (
         patch(

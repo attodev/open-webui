@@ -14,8 +14,13 @@ def _fake_request():
 
 def _fake_user(id='user-1'):
     return UserModel(
-        id=id, name='Test', email='test@example.com', role='user',
-        last_active_at=0, updated_at=0, created_at=0,
+        id=id,
+        name='Test',
+        email='test@example.com',
+        role='user',
+        last_active_at=0,
+        updated_at=0,
+        created_at=0,
     )
 
 
@@ -80,9 +85,7 @@ async def test_newapi_session_auth_type_raises_when_access_token_missing_from_st
 
     user = _fake_user()
     async with AsyncSessionLocal() as db:
-        await OAuthSessions.create_session(
-            user.id, 'newapi', {'expires_at': int(time.time()) + 3600}, db=db
-        )
+        await OAuthSessions.create_session(user.id, 'newapi', {'expires_at': int(time.time()) + 3600}, db=db)
 
     with pytest.raises(HTTPException) as exc_info:
         await get_headers_and_cookies(
