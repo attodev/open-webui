@@ -165,7 +165,7 @@
 		}
 
 		const error = $page.url.searchParams.get('error');
-		if (error) {
+		if (error && error !== 'newapi_sso_failed') {
 			toast.error(error);
 		}
 
