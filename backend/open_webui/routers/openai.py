@@ -1372,6 +1372,15 @@ async def generate_chat_completion(
                     r.status,
                     error_body[:1000],
                 )
+                # A newapi_session connection's stored token can still look
+                # fresh by our own locally-recorded expires_at while new-api
+                # has already revoked/logged out the session on its side --
+                # that mismatch surfaces here as a genuine upstream 401. Map
+                # it to the same NEWAPI_RECONNECT_REQUIRED marker that
+                # get_headers_and_cookies raises for the "our clock says
+                # it's expired" case, so the frontend's reconnect banner
+                # (ResponseMessage.svelte) fires either way.
+                newapi_reconnect_required = api_config.get('auth_type') == 'newapi_session' and r.status == 401
                 try:
                     error_json = json.loads(error_body)
                     await publish_model_provider_request_failed(
@@ -1384,6 +1393,8 @@ async def generate_chat_completion(
                         requested_model=requested_model,
                         upstream_error=error_json,
                     )
+                    if newapi_reconnect_required:
+                        raise HTTPException(status_code=424, detail='NEWAPI_RECONNECT_REQUIRED')
                     return JSONResponse(status_code=r.status, content=error_json)
                 except json.JSONDecodeError:
                     await publish_model_provider_request_failed(
@@ -1396,6 +1407,8 @@ async def generate_chat_completion(
                         requested_model=requested_model,
                         upstream_error=error_body,
                     )
+                    if newapi_reconnect_required:
+                        raise HTTPException(status_code=424, detail='NEWAPI_RECONNECT_REQUIRED')
                     return JSONResponse(
                         status_code=r.status,
                         content={'error': {'message': error_body, 'code': r.status}},
@@ -1425,6 +1438,10 @@ async def generate_chat_completion(
                     requested_model=requested_model,
                     upstream_error=response,
                 )
+                # Same newapi_session reconnect mapping as the SSE branch
+                # above -- see the comment there for why this is needed.
+                if api_config.get('auth_type') == 'newapi_session' and r.status == 401:
+                    raise HTTPException(status_code=424, detail='NEWAPI_RECONNECT_REQUIRED')
                 if isinstance(response, (dict, list)):
                     return JSONResponse(status_code=r.status, content=response)
                 else:
@@ -1435,6 +1452,14 @@ async def generate_chat_completion(
                 response = convert_responses_result(response)
 
             return response
+    except HTTPException:
+        # Let intentionally-raised HTTPExceptions (e.g. the
+        # NEWAPI_RECONNECT_REQUIRED 424 above) pass through untouched.
+        # HTTPException is itself an Exception, so without this clause
+        # ahead of the generic `except Exception` below, it would be
+        # caught there and silently replaced with a different
+        # status/detail, destroying the reconnect marker.
+        raise
     except Exception as e:
         log.exception(e)
 
