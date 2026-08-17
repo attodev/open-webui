@@ -34,6 +34,7 @@
 	let mode = $config?.features.enable_ldap ? 'ldap' : 'signin';
 
 	let form = null;
+	let newapiSsoErrorReason = '';
 
 	let name = '';
 	let email = '';
@@ -170,6 +171,10 @@
 
 		await oauthCallbackHandler();
 		form = $page.url.searchParams.get('form');
+
+		if ($page.url.searchParams.get('error') === 'newapi_sso_failed') {
+			newapiSsoErrorReason = $page.url.searchParams.get('reason') ?? '';
+		}
 
 		// Auto-redirect to SSO when OAUTH_AUTO_REDIRECT is enabled and the
 		// deployment is unambiguously SSO-only (single provider, no login form,
@@ -377,6 +382,27 @@
 										{/if}
 									</div>
 								{/if}
+
+								{#if $config?.newapi_sso?.enable}
+									{#if newapiSsoErrorReason === 'invalid_client'}
+										<div class="mt-4 text-center text-sm text-red-600 dark:text-red-400">
+											{$i18n.t('Sign-in is temporarily unavailable. Please try again shortly.')}
+										</div>
+									{:else if newapiSsoErrorReason}
+										<div class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
+											{$i18n.t('That sign-in link expired or was already used.')}
+										</div>
+									{/if}
+									<div class="mt-2 text-center">
+										<a
+											href={$config?.newapi_sso?.entry_url}
+											class="text-sm font-medium text-gray-700 dark:text-gray-200 underline"
+										>
+											{$i18n.t('Sign in with new-api')}
+										</a>
+									</div>
+								{/if}
+
 								<div class="mt-5">
 									{#if $config?.features.enable_login_form || $config?.features.enable_ldap || form}
 										{#if mode === 'ldap'}
