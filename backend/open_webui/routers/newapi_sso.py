@@ -12,6 +12,7 @@ it, so there is nothing to check it against. This is an accepted trade-off
 of the IdP-initiated flow (see the design spec, "잔여 리스크").
 """
 
+import asyncio
 import datetime
 import logging
 import uuid
@@ -99,9 +100,13 @@ async def _store_newapi_token(user_id: str, access_token: str, expires_in: int, 
 
 
 @router.get('/callback')
-async def newapi_callback(request: Request, code: str, state: str = ''):
+async def newapi_callback(request: Request, code: str = '', state: str = ''):
     from open_webui.internal.db import AsyncSessionLocal
     from open_webui.routers.auths import create_session_response
+
+    if not code:
+        log.info('new-api SSO callback received without a code')
+        return RedirectResponse(url=_reconnect_redirect('missing_code'), status_code=302)
 
     async with AsyncSessionLocal() as db:
         try:
@@ -113,6 +118,11 @@ async def newapi_callback(request: Request, code: str, state: str = ''):
             else:
                 log.info('new-api SSO callback failed (%s): %s', e.reason, e)
             return RedirectResponse(url=_reconnect_redirect(e.reason), status_code=302)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error('Unexpected error exchanging new-api token/userinfo: %s', e)
+            return RedirectResponse(url=_reconnect_redirect('server_error'), status_code=302)
 
         try:
             user = await _provision_or_login_user(userinfo, db)
@@ -150,4 +160,9 @@ async def newapi_callback(request: Request, code: str, state: str = ''):
             # routine failure mode, so log it more assertively than the
             # invalid_grant/network_error branches above.
             log.error('new-api SSO provisioning hit a database integrity error (likely a concurrent login race): %s', e)
+            return RedirectResponse(url=_reconnect_redirect('server_error'), status_code=302)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error('Unexpected error provisioning/logging in new-api SSO user: %s', e)
             return RedirectResponse(url=_reconnect_redirect('server_error'), status_code=302)

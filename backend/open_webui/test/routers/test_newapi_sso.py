@@ -298,3 +298,85 @@ async def test_callback_redirects_to_server_error_on_concurrent_new_user_race(db
     async with AsyncSessionLocal() as db:
         # Only the winner's account exists — the loser's request never created a duplicate.
         assert await Users.get_num_users(db=db) == 1
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_gracefully_when_code_is_missing(db_engine, async_client):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    mock_exchange = AsyncMock()
+    with patch('open_webui.routers.newapi_sso.exchange_code_for_token', new=mock_exchange):
+        res = await async_client.get('/auth/newapi/callback', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=missing_code'
+    mock_exchange.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_gracefully_when_code_is_empty(db_engine, async_client):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    mock_exchange = AsyncMock()
+    with patch('open_webui.routers.newapi_sso.exchange_code_for_token', new=mock_exchange):
+        res = await async_client.get('/auth/newapi/callback?code=', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=missing_code'
+    mock_exchange.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_gracefully_on_unexpected_exception_during_provisioning(db_engine, async_client):
+    """
+    A catch-all for unexpected exceptions inside the provisioning try-block
+    must never let a raw 500 reach the browser — every failure in this
+    route redirects to /auth with a reason.
+    """
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-x', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={'sub': 'newapi-user-x', 'email': 'x@example.com', 'name': 'X', 'is_admin': False}
+            ),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso._provision_or_login_user',
+            new=AsyncMock(side_effect=ValueError('boom')),
+        ),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=server_error'
+    assert 'token' not in res.cookies
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_gracefully_on_unexpected_exception_during_token_exchange(db_engine, async_client):
+    """Same catch-all, but for the exchange/userinfo try-block."""
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with patch(
+        'open_webui.routers.newapi_sso.exchange_code_for_token',
+        new=AsyncMock(side_effect=ValueError('boom')),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=server_error'
+    assert 'token' not in res.cookies
