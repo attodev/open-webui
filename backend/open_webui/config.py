@@ -3041,6 +3041,7 @@ DEFAULT_CONFIG = {
     'audio.tts.mistral.api_base_url': AUDIO_TTS_MISTRAL_API_BASE_URL,
     'webui.url': WEBUI_URL,
     'ui.enable_signup': ENABLE_SIGNUP,
+    'ui.enable_user_management': True,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,
     'ui.default_locale': DEFAULT_LOCALE,

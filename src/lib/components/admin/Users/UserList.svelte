@@ -209,14 +209,16 @@
 				{/if}
 			</div>
 
-			<button
-				class="ml-1 shrink-0 rounded-lg bg-gray-50 px-2.5 py-1 text-xs text-gray-900 transition ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-850 dark:text-gray-100 dark:ring-gray-800 dark:hover:bg-gray-800"
-				on:click={() => {
-					showAddUserModal = !showAddUserModal;
-				}}
-			>
-				{$i18n.t('Add User')}
-			</button>
+			{#if $config?.features?.enable_user_management ?? true}
+				<button
+					class="ml-1 shrink-0 rounded-lg bg-gray-50 px-2.5 py-1 text-xs text-gray-900 transition ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-850 dark:text-gray-100 dark:ring-gray-800 dark:hover:bg-gray-800"
+					on:click={() => {
+						showAddUserModal = !showAddUserModal;
+					}}
+				>
+					{$i18n.t('Add User')}
+				</button>
+			{/if}
 		</div>
 	</div>
 
@@ -441,7 +443,7 @@
 									</button>
 								</Tooltip>
 
-								{#if user.role !== 'admin'}
+								{#if user.role !== 'admin' && ($config?.features?.enable_user_management ?? true)}
 									<Tooltip content={$i18n.t('Delete User')}>
 										<button
 											class="self-center w-fit p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg"

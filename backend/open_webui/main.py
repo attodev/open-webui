@@ -2107,6 +2107,7 @@ async def get_app_config(request: Request):
         'oauth.auto_redirect',
         'ldap.enable',
         'ui.enable_signup',
+        'ui.enable_user_management',
         'ui.enable_login_form',
         'auth.enable_api_keys',
         'ui.enable_password_change_form',
@@ -2181,6 +2182,7 @@ async def get_app_config(request: Request):
             'enable_signup_password_confirmation': ENABLE_SIGNUP_PASSWORD_CONFIRMATION,
             'enable_ldap': config.get('ldap.enable'),
             'enable_signup': config.get('ui.enable_signup'),
+            'enable_user_management': config.get('ui.enable_user_management', True),
             'enable_login_form': config.get('ui.enable_login_form'),
             'enable_websocket': ENABLE_WEBSOCKET_SUPPORT,
             # --- Authenticated: only consumed by logged-in frontend ---

@@ -41,3 +41,16 @@ async def test_app_config_hides_entry_url_when_newapi_sso_disabled(db_engine, as
 
     assert res.status_code == 200
     assert res.json()['newapi_sso'] == {'enable': False, 'entry_url': ''}
+
+
+@pytest.mark.asyncio
+async def test_app_config_defaults_enable_user_management_to_true(db_engine):
+    from open_webui.main import app
+
+    async_client_transport_app = app
+    from httpx import ASGITransport, AsyncClient
+
+    async with AsyncClient(transport=ASGITransport(app=async_client_transport_app), base_url='http://test') as client:
+        res = await client.get('/api/config')
+
+    assert res.json()['features']['enable_user_management'] is True
