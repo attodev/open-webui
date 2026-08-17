@@ -388,6 +388,14 @@
 										<div class="mt-4 text-center text-sm text-red-600 dark:text-red-400">
 											{$i18n.t('Sign-in is temporarily unavailable. Please try again shortly.')}
 										</div>
+									{:else if newapiSsoErrorReason === 'rate_limited'}
+										<div class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
+											{$i18n.t('Too many sign-in attempts. Please wait a few minutes and try again.')}
+										</div>
+									{:else if newapiSsoErrorReason === 'server_error'}
+										<div class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
+											{$i18n.t('Something went wrong while signing you in. Please try again.')}
+										</div>
 									{:else if newapiSsoErrorReason}
 										<div class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
 											{$i18n.t('That sign-in link expired or was already used.')}
