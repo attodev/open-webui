@@ -52,3 +52,103 @@ async def test_callback_creates_new_user_and_stores_token(db_engine, async_clien
         assert session is not None
         assert session.token['access_token'] == 'sk-abc'
         assert session.expires_at - int(time.time()) == pytest.approx(86400, abs=5)
+
+
+@pytest.mark.asyncio
+async def test_callback_logs_in_existing_user_by_sub(db_engine, async_client):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    async with AsyncSessionLocal() as db:
+        existing = await Users.insert_new_user(
+            id='user-existing', name='Bob', email='bob@example.com', role='user', db=db
+        )
+        await Users.update_user_oauth_by_id(existing.id, 'newapi', 'newapi-user-bob', db=db)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-bob', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={'sub': 'newapi-user-bob', 'email': 'bob-changed@example.com', 'name': 'Bob', 'is_admin': False}
+            ),
+        ),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+
+    async with AsyncSessionLocal() as db:
+        user = await Users.get_user_by_id('user-existing', db=db)
+        # sub match wins even though new-api's email claim changed — no duplicate account created.
+        assert user.email == 'bob@example.com'
+        assert await Users.get_user_by_email('bob-changed@example.com', db=db) is None
+
+
+@pytest.mark.asyncio
+async def test_callback_matches_existing_local_account_by_email_when_no_sub_link(db_engine, async_client):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    async with AsyncSessionLocal() as db:
+        await Users.insert_new_user(
+            id='user-carol', name='Carol', email='carol@example.com', role='user', db=db
+        )
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-carol', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={'sub': 'newapi-user-carol', 'email': 'carol@example.com', 'name': 'Carol', 'is_admin': False}
+            ),
+        ),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+
+    async with AsyncSessionLocal() as db:
+        user = await Users.get_user_by_id('user-carol', db=db)
+        assert user.oauth == {'newapi': {'sub': 'newapi-user-carol'}}
+        # Only one account for carol@example.com exists.
+        assert await Users.get_num_users(db=db) == 1
+
+
+@pytest.mark.asyncio
+async def test_callback_promotes_existing_user_when_is_admin_claim_present(db_engine, async_client):
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    async with AsyncSessionLocal() as db:
+        existing = await Users.insert_new_user(
+            id='user-dave', name='Dave', email='dave@example.com', role='user', db=db
+        )
+        await Users.update_user_oauth_by_id(existing.id, 'newapi', 'newapi-user-dave', db=db)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-dave', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={'sub': 'newapi-user-dave', 'email': 'dave@example.com', 'name': 'Dave', 'is_admin': True}
+            ),
+        ),
+    ):
+        await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    async with AsyncSessionLocal() as db:
+        user = await Users.get_user_by_id('user-dave', db=db)
+        assert user.role == 'admin'
