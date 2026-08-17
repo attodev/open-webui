@@ -94,6 +94,38 @@ async def test_newapi_session_auth_type_raises_when_access_token_missing_from_st
 
 
 @pytest.mark.asyncio
+async def test_newapi_session_auth_type_isolates_tokens_between_users(db_engine):
+    """
+    Deferred finding #5: each user's newapi_session token is per-user
+    billing/gateway credential — user A must never see user B's token
+    (and vice versa) when both have their own stored OAuthSessions row.
+    """
+    from open_webui.routers.openai import get_headers_and_cookies
+
+    user_a = _fake_user(id='user-a')
+    user_b = _fake_user(id='user-b')
+
+    async with AsyncSessionLocal() as db:
+        await OAuthSessions.create_session(
+            user_a.id, 'newapi', {'access_token': 'sk-user-a', 'expires_at': int(time.time()) + 3600}, db=db
+        )
+        await OAuthSessions.create_session(
+            user_b.id, 'newapi', {'access_token': 'sk-user-b', 'expires_at': int(time.time()) + 3600}, db=db
+        )
+
+    headers_a, _ = await get_headers_and_cookies(
+        _fake_request(), 'https://newapi.example.com/v1', config={'auth_type': 'newapi_session'}, user=user_a
+    )
+    headers_b, _ = await get_headers_and_cookies(
+        _fake_request(), 'https://newapi.example.com/v1', config={'auth_type': 'newapi_session'}, user=user_b
+    )
+
+    assert headers_a['Authorization'] == 'Bearer sk-user-a'
+    assert headers_b['Authorization'] == 'Bearer sk-user-b'
+    assert headers_a['Authorization'] != headers_b['Authorization']
+
+
+@pytest.mark.asyncio
 async def test_newapi_session_auth_type_does_not_fall_back_to_key(db_engine):
     from open_webui.routers.openai import get_headers_and_cookies
 
