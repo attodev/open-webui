@@ -1,6 +1,8 @@
 import pytest
 from httpx import ASGITransport
 
+from open_webui.models.users import Users
+
 
 @pytest.mark.asyncio
 async def test_app_config_exposes_newapi_sso_settings(db_engine, async_client, monkeypatch):
@@ -44,13 +46,37 @@ async def test_app_config_hides_entry_url_when_newapi_sso_disabled(db_engine, as
 
 
 @pytest.mark.asyncio
-async def test_app_config_defaults_enable_user_management_to_true(db_engine):
+async def test_app_config_defaults_enable_user_management_to_true_for_authenticated_admin(db_engine):
+    # `enable_user_management` gates the admin-only Add/Delete User buttons
+    # on UserList.svelte, so it's only present in the authenticated block of
+    # `features` (guarded by `user is not None`) -- it must never appear for
+    # an unauthenticated request. Authenticate as an admin to exercise it.
+    from open_webui.internal.db import AsyncSessionLocal
     from open_webui.main import app
-
-    async_client_transport_app = app
+    from open_webui.utils.auth import create_token
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=async_client_transport_app), base_url='http://test') as client:
-        res = await client.get('/api/config')
+    async with AsyncSessionLocal() as db:
+        user = await Users.insert_new_user(
+            id='user-1', name='Admin User', email='admin@example.com', role='admin', db=db
+        )
+
+    token = create_token(data={'id': user.id})
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        res = await client.get('/api/config', headers={'Authorization': f'Bearer {token}'})
 
     assert res.json()['features']['enable_user_management'] is True
+
+
+@pytest.mark.asyncio
+async def test_app_config_omits_enable_user_management_when_unauthenticated(db_engine):
+    # Companion to the authenticated-default test above: an unauthenticated
+    # request must not see this admin-only flag at all.
+    from open_webui.main import app
+    from httpx import ASGITransport, AsyncClient
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        res = await client.get('/api/config')
+
+    assert 'enable_user_management' not in res.json()['features']
