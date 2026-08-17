@@ -15,6 +15,7 @@ of the IdP-initiated flow (see the design spec, "잔여 리스크").
 import asyncio
 import datetime
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Request
@@ -109,7 +110,7 @@ async def _provision_or_login_user(userinfo: dict, db):
 async def _store_newapi_token(user_id: str, access_token: str, expires_in: int, db):
     token = {
         'access_token': access_token,
-        'expires_at': int(datetime.datetime.now().timestamp()) + expires_in,
+        'expires_at': int(time.time()) + expires_in,
     }
     existing = await OAuthSessions.get_session_by_provider_and_user_id('newapi', user_id, db=db)
     if existing:
