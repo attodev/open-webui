@@ -18,6 +18,7 @@ import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
+from open_webui.env import WEBUI_AUTH_COOKIE_SAME_SITE, WEBUI_AUTH_COOKIE_SECURE
 from open_webui.models.auths import Auths
 from open_webui.models.config import Config
 from open_webui.models.oauth_sessions import OAuthSessions
@@ -117,9 +118,26 @@ async def newapi_callback(request: Request, code: str, state: str = ''):
             user = await _provision_or_login_user(userinfo, db)
             await _store_newapi_token(user.id, token_response['access_token'], token_response['expires_in'], db)
 
-            response = RedirectResponse(url='/', status_code=302)
-            await create_session_response(
-                request, user, db, response=response, set_cookie=True, source='newapi_sso', expires_delta=NEWAPI_SESSION_TTL
+            session = await create_session_response(
+                request, user, db, set_cookie=False, source='newapi_sso', expires_delta=NEWAPI_SESSION_TTL
+            )
+
+            # Land on /auth (not /) and set the cookie ourselves with
+            # httponly=False, matching the generic OAuth callback
+            # (utils/oauth.py). This app is a pure SPA that only bootstraps a
+            # session from localStorage, which oauthCallbackHandler()
+            # (src/routes/auth/+page.svelte) populates by reading this cookie
+            # via `document.cookie` — invisible if httpOnly. Redirecting to
+            # '/' would also get bounced by the app's unauthenticated-route
+            # guard before that handler ever runs.
+            response = RedirectResponse(url='/auth', status_code=302)
+            response.set_cookie(
+                key='token',
+                value=session['token'],
+                httponly=False,
+                samesite=WEBUI_AUTH_COOKIE_SAME_SITE,
+                secure=WEBUI_AUTH_COOKIE_SECURE,
+                max_age=int(NEWAPI_SESSION_TTL.total_seconds()),
             )
             return response
         except IntegrityError as e:

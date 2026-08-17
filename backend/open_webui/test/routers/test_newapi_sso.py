@@ -37,7 +37,7 @@ async def test_callback_creates_new_user_and_stores_token(db_engine, async_clien
         res = await async_client.get('/auth/newapi/callback?code=abc123&state=xyz', follow_redirects=False)
 
     assert res.status_code == 302
-    assert res.headers['location'] == '/'
+    assert res.headers['location'] == '/auth'
     assert 'token' in res.cookies
 
     async with AsyncSessionLocal() as db:
@@ -54,6 +54,45 @@ async def test_callback_creates_new_user_and_stores_token(db_engine, async_clien
         assert session is not None
         assert session.token['access_token'] == 'sk-abc'
         assert session.expires_at - int(time.time()) == pytest.approx(86400, abs=5)
+
+
+@pytest.mark.asyncio
+async def test_callback_success_cookie_is_readable_by_frontend_js(db_engine, async_client):
+    """
+    Regression test for the bug where a successful login never reached the
+    chat UI: this app is a pure SPA that only bootstraps `$user` from
+    `localStorage.token`, which `oauthCallbackHandler()`
+    (src/routes/auth/+page.svelte) populates by reading the `token` cookie
+    via `document.cookie` — invisible if the cookie is httpOnly. The
+    redirect must also land on `/auth` (where that handler runs), not `/`
+    (whose unauthenticated-route guard would bounce the user out before the
+    cookie is ever read).
+    """
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-frank', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={'sub': 'newapi-user-frank', 'email': 'frank@example.com', 'name': 'Frank', 'is_admin': False}
+            ),
+        ),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth'
+
+    set_cookie_headers = res.headers.get_list('set-cookie')
+    token_cookie_headers = [h for h in set_cookie_headers if h.startswith('token=')]
+    assert len(token_cookie_headers) == 1
+    assert 'httponly' not in token_cookie_headers[0].lower()
 
 
 @pytest.mark.asyncio
