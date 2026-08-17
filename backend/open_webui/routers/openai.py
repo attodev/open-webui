@@ -214,7 +214,7 @@ async def get_headers_and_cookies(
         from open_webui.models.oauth_sessions import OAuthSessions
 
         session = await OAuthSessions.get_session_by_provider_and_user_id('newapi', user.id) if user else None
-        if not session or session.expires_at <= int(time.time()):
+        if not session or not session.token.get('access_token') or session.expires_at <= int(time.time()):
             raise HTTPException(status_code=424, detail='NEWAPI_RECONNECT_REQUIRED')
         token = session.token.get('access_token')
 

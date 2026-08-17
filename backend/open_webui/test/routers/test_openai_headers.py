@@ -68,6 +68,32 @@ async def test_newapi_session_auth_type_raises_when_session_expired(db_engine):
 
 
 @pytest.mark.asyncio
+async def test_newapi_session_auth_type_raises_when_access_token_missing_from_stored_token(db_engine):
+    """
+    Defensive case for finding M2: a session row can exist and not be
+    expired, but its stored token dict might be missing 'access_token'
+    (shouldn't normally happen). Previously the code fell through and sent
+    the request with no Authorization header at all instead of raising
+    the 424 reconnect signal.
+    """
+    from open_webui.routers.openai import get_headers_and_cookies
+
+    user = _fake_user()
+    async with AsyncSessionLocal() as db:
+        await OAuthSessions.create_session(
+            user.id, 'newapi', {'expires_at': int(time.time()) + 3600}, db=db
+        )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_headers_and_cookies(
+            _fake_request(), 'https://newapi.example.com/v1', config={'auth_type': 'newapi_session'}, user=user
+        )
+
+    assert exc_info.value.status_code == 424
+    assert exc_info.value.detail == 'NEWAPI_RECONNECT_REQUIRED'
+
+
+@pytest.mark.asyncio
 async def test_newapi_session_auth_type_does_not_fall_back_to_key(db_engine):
     from open_webui.routers.openai import get_headers_and_cookies
 
