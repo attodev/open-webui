@@ -1320,11 +1320,16 @@ class OAuthManager:
             # oauth_client_manager, not the SSO OAuthManager.  If one
             # reaches here (e.g. via a stale cookie), bail out early
             # instead of attempting a refresh that will fail and delete
-            # the session (#24618).
-            if (session.provider or '').startswith('mcp:'):
+            # the session (#24618). Also exclude the new-api SSO session:
+            # it's a per-user LLM-gateway billing credential, not a
+            # general OAuth token, and isn't managed by this OAuthManager
+            # either. It shouldn't normally reach here, but this guard
+            # keeps this function symmetric with the other fallback
+            # lookups that already exclude it.
+            if (session.provider or '').startswith('mcp:') or session.provider == 'newapi':
                 log.debug(
-                    f'Skipping MCP session {session.id} (provider={session.provider}) '
-                    f'in SSO OAuthManager — handled by oauth_client_manager'
+                    f'Skipping MCP/new-api session {session.id} (provider={session.provider}) '
+                    f'in SSO OAuthManager — handled elsewhere'
                 )
                 return None
 
