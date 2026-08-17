@@ -1,14 +1,19 @@
+import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 
 class _FakeResponse:
-    def __init__(self, status, payload):
+    def __init__(self, status, payload=None, json_error=None):
         self.status = status
         self._payload = payload
+        self._json_error = json_error
 
     async def json(self, **kwargs):
+        if self._json_error is not None:
+            raise self._json_error
         return self._payload
 
 
@@ -106,3 +111,78 @@ async def test_fetch_userinfo_missing_sub_raises():
             await fetch_userinfo('sk-abc')
 
     assert exc_info.value.reason == 'invalid_userinfo'
+
+
+class _FakeSessionRaisesOnCall:
+    """A session whose post()/get() raise synchronously, before any `async with`."""
+
+    def __init__(self, exc):
+        self._exc = exc
+
+    def post(self, *args, **kwargs):
+        raise self._exc
+
+    def get(self, *args, **kwargs):
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_token_total_timeout_raises_network_error():
+    from open_webui.utils.newapi_oauth import NewapiOAuthError, exchange_code_for_token
+
+    # A bare asyncio.TimeoutError (not aiohttp.ClientError) is exactly what
+    # aiohttp raises when a session-level *total* timeout fires.
+    fake_session = _FakeSessionRaisesOnCall(asyncio.TimeoutError())
+    with patch('open_webui.utils.newapi_oauth.get_session', new=AsyncMock(return_value=fake_session)):
+        with pytest.raises(NewapiOAuthError) as exc_info:
+            await exchange_code_for_token('a-code')
+
+    assert exc_info.value.reason == 'network_error'
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_token_malformed_json_raises_network_error():
+    from open_webui.utils.newapi_oauth import NewapiOAuthError, exchange_code_for_token
+
+    fake_session = _FakeSession(_FakeResponse(200, json_error=json.JSONDecodeError('bad json', 'doc', 0)))
+    with patch('open_webui.utils.newapi_oauth.get_session', new=AsyncMock(return_value=fake_session)):
+        with pytest.raises(NewapiOAuthError) as exc_info:
+            await exchange_code_for_token('a-code')
+
+    assert exc_info.value.reason == 'network_error'
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_token_missing_access_token_raises_network_error():
+    from open_webui.utils.newapi_oauth import NewapiOAuthError, exchange_code_for_token
+
+    fake_session = _FakeSession(_FakeResponse(200, {'expires_in': 86400}))
+    with patch('open_webui.utils.newapi_oauth.get_session', new=AsyncMock(return_value=fake_session)):
+        with pytest.raises(NewapiOAuthError) as exc_info:
+            await exchange_code_for_token('a-code')
+
+    assert exc_info.value.reason == 'network_error'
+
+
+@pytest.mark.asyncio
+async def test_fetch_userinfo_total_timeout_raises_network_error():
+    from open_webui.utils.newapi_oauth import NewapiOAuthError, fetch_userinfo
+
+    fake_session = _FakeSessionRaisesOnCall(asyncio.TimeoutError())
+    with patch('open_webui.utils.newapi_oauth.get_session', new=AsyncMock(return_value=fake_session)):
+        with pytest.raises(NewapiOAuthError) as exc_info:
+            await fetch_userinfo('sk-abc')
+
+    assert exc_info.value.reason == 'network_error'
+
+
+@pytest.mark.asyncio
+async def test_fetch_userinfo_malformed_json_raises_network_error():
+    from open_webui.utils.newapi_oauth import NewapiOAuthError, fetch_userinfo
+
+    fake_session = _FakeSession(_FakeResponse(200, json_error=json.JSONDecodeError('bad json', 'doc', 0)))
+    with patch('open_webui.utils.newapi_oauth.get_session', new=AsyncMock(return_value=fake_session)):
+        with pytest.raises(NewapiOAuthError) as exc_info:
+            await fetch_userinfo('sk-abc')
+
+    assert exc_info.value.reason == 'network_error'

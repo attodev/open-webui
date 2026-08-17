@@ -14,11 +14,12 @@ and docs/2026-08-17-openwebui-response-to-newapi-oauth2-handoff.md for the
 full protocol contract this module implements against.
 """
 
+import asyncio
 import logging
 
 import aiohttp
 from open_webui.env import NEWAPI_OAUTH_BASE_URL, NEWAPI_OAUTH_CLIENT_ID, NEWAPI_OAUTH_CLIENT_SECRET
-from open_webui.utils.session_pool import cleanup_response, get_session
+from open_webui.utils.session_pool import get_session
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +52,13 @@ async def exchange_code_for_token(code: str) -> dict:
             if response.status != 200:
                 log.error('Unexpected new-api token exchange response: %s %s', response.status, payload)
                 raise NewapiOAuthError('network_error', f'Unexpected response status {response.status}')
-            return {'access_token': payload['access_token'], 'expires_in': payload['expires_in']}
-    except aiohttp.ClientError as e:
+            access_token = payload.get('access_token')
+            expires_in = payload.get('expires_in')
+            if not access_token or expires_in is None:
+                log.error("new-api token exchange response missing 'access_token' or 'expires_in': %s", payload)
+                raise NewapiOAuthError('network_error', "Response missing 'access_token' or 'expires_in'")
+            return {'access_token': access_token, 'expires_in': expires_in}
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
         log.error('Network error exchanging new-api authorization code: %s', e)
         raise NewapiOAuthError('network_error', str(e)) from e
 
@@ -80,6 +86,6 @@ async def fetch_userinfo(access_token: str) -> dict:
                 'name': payload.get('name') or email,
                 'is_admin': bool(payload.get('is_admin', False)),
             }
-    except aiohttp.ClientError as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
         log.error('Network error fetching new-api userinfo: %s', e)
         raise NewapiOAuthError('network_error', str(e)) from e
