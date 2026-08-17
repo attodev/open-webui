@@ -414,6 +414,10 @@
 													<option value="microsoft_entra_id">{$i18n.t('Entra ID')}</option>
 												{/if}
 											{/if}
+
+											{#if auth_type === 'newapi_session'}
+												<option value="newapi_session">{$i18n.t('new-api Session (per-user)')}</option>
+											{/if}
 										</select>
 									</div>
 
