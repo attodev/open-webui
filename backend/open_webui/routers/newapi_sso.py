@@ -19,7 +19,7 @@ import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
-from open_webui.env import WEBUI_AUTH_COOKIE_SAME_SITE, WEBUI_AUTH_COOKIE_SECURE
+from open_webui.env import ENABLE_NEWAPI_SSO, WEBUI_AUTH_COOKIE_SAME_SITE, WEBUI_AUTH_COOKIE_SECURE
 from open_webui.models.auths import Auths
 from open_webui.models.config import Config
 from open_webui.models.oauth_sessions import OAuthSessions
@@ -27,6 +27,8 @@ from open_webui.models.users import Users
 from open_webui.utils.auth import get_password_hash
 from open_webui.utils.groups import apply_default_group_assignment
 from open_webui.utils.newapi_oauth import NewapiOAuthError, exchange_code_for_token, fetch_userinfo
+from open_webui.utils.rate_limit import RateLimiter
+from open_webui.utils.redis import get_redis_client
 from sqlalchemy.exc import IntegrityError
 
 log = logging.getLogger(__name__)
@@ -36,6 +38,13 @@ router = APIRouter()
 # Forced regardless of the deployment's global auth.jwt_expiry — see the
 # design spec's "세션 상한 24h의 근거" for why this bound exists.
 NEWAPI_SESSION_TTL = datetime.timedelta(hours=24)
+
+# This callback drives up to two outbound calls to new-api per hit and,
+# unlike /signin (auths.py's signin_rate_limiter), had no throttling at
+# all. There is no caller identity before the token exchange completes, so
+# this is keyed by client IP — the same best-effort-only trade-off as
+# auths.py's token_exchange_rate_limiter.
+newapi_callback_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=5 * 3, window=60 * 3)
 
 
 def _reconnect_redirect(reason: str) -> str:
@@ -103,6 +112,14 @@ async def _store_newapi_token(user_id: str, access_token: str, expires_in: int, 
 async def newapi_callback(request: Request, code: str = '', state: str = ''):
     from open_webui.internal.db import AsyncSessionLocal
     from open_webui.routers.auths import create_session_response
+
+    if not ENABLE_NEWAPI_SSO:
+        # Redirect exactly like any other failure — never distinguish
+        # "disabled" from "misconfigured" for an unauthenticated caller.
+        return RedirectResponse(url='/auth', status_code=302)
+
+    if newapi_callback_rate_limiter.is_limited(request.client.host if request.client else 'unknown'):
+        return RedirectResponse(url=_reconnect_redirect('rate_limited'), status_code=302)
 
     if not code:
         log.info('new-api SSO callback received without a code')

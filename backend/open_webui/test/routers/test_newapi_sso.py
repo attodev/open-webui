@@ -8,12 +8,32 @@ from httpx import ASGITransport
 from open_webui.internal.db import AsyncSessionLocal
 from open_webui.models.users import Users
 from open_webui.utils.newapi_oauth import NewapiOAuthError
+from open_webui.utils.rate_limit import RateLimiter
 
 
 def _mount(app):
     from open_webui.routers import newapi_sso
 
     app.include_router(newapi_sso.router, prefix='/auth/newapi')
+
+
+@pytest.fixture(autouse=True)
+def _enable_newapi_sso(monkeypatch):
+    """
+    ENABLE_NEWAPI_SSO defaults to False (env var unset in tests), but every
+    test in this file below exercises the callback's actual behavior, so
+    default it on here. Patched on the newapi_sso module's own namespace
+    (not just open_webui.env) since it's imported by value at module load
+    time. The one test that cares about the disabled case re-patches this
+    to False itself.
+
+    Also resets the rate limiter's in-memory fallback store: there's no
+    real Redis in tests, and every request in this file shares the same
+    'unknown' key (no real client IP under ASGITransport), so counts would
+    otherwise accumulate across tests and trip the limiter.
+    """
+    monkeypatch.setattr('open_webui.routers.newapi_sso.ENABLE_NEWAPI_SSO', True)
+    RateLimiter._memory_store.clear()
 
 
 @pytest.mark.asyncio
@@ -362,6 +382,29 @@ async def test_callback_redirects_gracefully_on_unexpected_exception_during_prov
     assert res.status_code == 302
     assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=server_error'
     assert 'token' not in res.cookies
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_without_token_exchange_when_sso_disabled(db_engine, async_client, monkeypatch):
+    """
+    ENABLE_NEWAPI_SSO gates this route the same way it gates /api/config's
+    newapi_sso.enable — the router is registered unconditionally in
+    main.py, so this check has to live in the handler itself. Patched on
+    the newapi_sso module's own namespace (not just open_webui.env) since
+    it's imported by value at module load time.
+    """
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    monkeypatch.setattr('open_webui.routers.newapi_sso.ENABLE_NEWAPI_SSO', False)
+
+    mock_exchange = AsyncMock()
+    with patch('open_webui.routers.newapi_sso.exchange_code_for_token', new=mock_exchange):
+        res = await async_client.get('/auth/newapi/callback?code=abc123&state=xyz', follow_redirects=False)
+
+    assert res.status_code == 302
+    mock_exchange.assert_not_called()
 
 
 @pytest.mark.asyncio
