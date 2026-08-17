@@ -26,7 +26,14 @@ os.environ['DATABASE_URL'] = f'sqlite:///{_TMP_DB_DIR}/test.db'
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from open_webui.internal.db import Base, engine
+from open_webui.internal.db import Base, engine, async_engine
+
+# Import all ORM models so they register with Base.metadata
+from open_webui.models.auths import Auths  # noqa: F401
+from open_webui.models.config import Config  # noqa: F401
+from open_webui.models.users import Users  # noqa: F401
+from open_webui.models.groups import Groups  # noqa: F401
+from open_webui.models.oauth_sessions import OAuthSessions  # noqa: F401
 
 
 @pytest.fixture(scope='function')
@@ -35,6 +42,16 @@ def db_engine():
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest_asyncio.fixture(scope='function')
+async def async_db():
+    """Create every ORM table fresh for each async test, then drop them."""
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield async_engine
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest_asyncio.fixture

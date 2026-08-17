@@ -168,10 +168,12 @@ async def create_session_response(
     response: Response = None,
     set_cookie: bool = False,
     source: str = 'api',
+    expires_delta: datetime.timedelta | None = None,
 ) -> dict:
     """
     Create JWT token and build session response for a user.
-    Shared helper for signin, signup, ldap_auth, add_user, and token_exchange endpoints.
+    Shared helper for signin, signup, ldap_auth, add_user, token_exchange,
+    and the new-api SSO callback.
 
     Args:
         request: FastAPI request object
@@ -179,8 +181,13 @@ async def create_session_response(
         db: Database session
         response: FastAPI response object (required if set_cookie is True)
         set_cookie: Whether to set the auth cookie on the response
+        expires_delta: When provided, overrides Config('auth.jwt_expiry') for
+            this call only. Used by the new-api SSO callback to force a
+            fixed 24h session regardless of the deployment's global setting
+            (see docs/superpowers/specs/2026-08-17-newapi-oauth2-sso-integration-design.md).
     """
-    expires_delta = parse_duration(await Config.get('auth.jwt_expiry'))
+    if expires_delta is None:
+        expires_delta = parse_duration(await Config.get('auth.jwt_expiry'))
     expires_at = None
     if expires_delta:
         expires_at = int(time.time()) + int(expires_delta.total_seconds())
