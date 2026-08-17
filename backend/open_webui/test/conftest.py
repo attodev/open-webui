@@ -26,7 +26,7 @@ os.environ['DATABASE_URL'] = f'sqlite:///{_TMP_DB_DIR}/test.db'
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from open_webui.internal.db import Base, engine, async_engine
+from open_webui.internal.db import Base, engine
 
 # Import all ORM models so they register with Base.metadata
 from open_webui.models.auths import Auths  # noqa: F401
