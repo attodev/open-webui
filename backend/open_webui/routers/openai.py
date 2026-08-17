@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from typing import Optional
 from urllib.parse import quote, urlparse
 
@@ -205,6 +206,17 @@ async def get_headers_and_cookies(
 
         if oauth_token:
             token = f'{oauth_token.get("access_token", "")}'
+
+    elif auth_type == 'newapi_session':
+        # Per-user credential so new-api attributes usage/billing to the
+        # actual calling user rather than a shared admin key. See
+        # docs/superpowers/specs/2026-08-17-newapi-oauth2-sso-integration-design.md.
+        from open_webui.models.oauth_sessions import OAuthSessions
+
+        session = await OAuthSessions.get_session_by_provider_and_user_id('newapi', user.id) if user else None
+        if not session or session.expires_at <= int(time.time()):
+            raise HTTPException(status_code=424, detail='NEWAPI_RECONNECT_REQUIRED')
+        token = session.token.get('access_token')
 
     elif auth_type in ('azure_ad', 'microsoft_entra_id'):
         token = get_microsoft_entra_id_access_token()
