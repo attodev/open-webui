@@ -1554,6 +1554,12 @@ NEWAPI_ENTRY_URL=<URL back to new-api's login/entry screen>
 ENABLE_PASSWORD_AUTH=false
 ```
 
+(As of this batch's M7 fix, leaving any of the four `NEWAPI_*` values empty while
+`ENABLE_NEWAPI_SSO=true` — or leaving `ENABLE_PASSWORD_AUTH` at its `true` default
+alongside it — now logs a startup `WARNING` from `backend/open_webui/config.py`
+naming what's missing/still-enabled. Nothing is auto-corrected; treat the warning
+as a checklist reminder, not a substitute for it.)
+
 And via the admin config API / `Config.upsert`:
 ```
 ui.enable_login_form = false
@@ -1561,6 +1567,85 @@ ui.enable_signup = false
 auth.enable_api_keys = false
 ui.enable_user_management = false
 auth.jwt_expiry = 24h
+ui.default_user_role = user
 ```
 
 (`ui.enable_password_change_form` needs no separate change — `Account.svelte` already only shows that tab when `enable_login_form` is also true, so it's already hidden by the first flag above.)
+
+- **`ui.default_user_role = user` matters here.** `_provision_or_login_user`
+  (`backend/open_webui/routers/newapi_sso.py`) creates every new SSO user with
+  `role=await Config.get('ui.default_user_role')` — the platform's general
+  new-signup default, not something new-api-specific. If that config is left at
+  a stricter value (e.g. `pending`), a user who successfully authenticated
+  through new-api — which this integration treats as fully trusted — would
+  still land locked out, contradicting the "new-api를 통과한 사용자는 무조건
+  허용" intent behind this feature. Set it to `user` as part of this checklist.
+
+- **`oauth.merge_accounts_by_email`.** `_provision_or_login_user` checks this
+  flag (mirroring the standard OAuth callback's `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`
+  behavior in `utils/oauth.py`) before linking a new-api login into an existing
+  account that matches by email but has no `newapi` oauth sub recorded yet. When
+  `true`, a pre-existing local/other-provider account with the same email is
+  adopted; when `false`, a fresh account is always provisioned instead (new-api
+  is still trusted either way — this flag only controls whether it's allowed to
+  merge into pre-existing identities). Decide deliberately per deployment
+  whether pre-existing accounts should be merged by email or kept separate.
+
+- **Setting `auth_type: 'newapi_session'` on a connection (no UI for this).**
+  The per-user new-api token forwarding (Task 8) only activates on an OpenAI
+  connection whose stored config has `"auth_type": "newapi_session"`. There is
+  no way to select this from `AddConnectionModal.svelte`'s Auth dropdown — that
+  option only renders once already set (see the `{#if auth_type ===
+  'newapi_session'}` guard around its `<option>`) — so it must be set directly
+  via `POST /openai/config/update` (`backend/open_webui/routers/openai.py`).
+  That endpoint **replaces** `OPENAI_API_BASE_URLS`/`OPENAI_API_KEYS`/
+  `OPENAI_API_CONFIGS` wholesale, so first `GET /openai/config` as an admin and
+  patch the existing arrays — don't send a payload with only the one
+  connection, or every other configured connection is silently dropped.
+  `OPENAI_API_CONFIGS` is keyed by the *string index* into the parallel
+  `OPENAI_API_BASE_URLS`/`OPENAI_API_KEYS` arrays (e.g. `"0"` for the first
+  connection), not by name or URL. Example, assuming the new-api connection is
+  already at index `0` and no other connections exist yet:
+
+  ```bash
+  curl -X POST "$WEBUI_BASE_URL/openai/config/update" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "ENABLE_OPENAI_API": true,
+      "OPENAI_API_BASE_URLS": ["https://<newapi-host>/v1"],
+      "OPENAI_API_KEYS": [""],
+      "OPENAI_API_CONFIGS": {
+        "0": {
+          "auth_type": "newapi_session"
+        }
+      }
+    }'
+  ```
+
+  The API key for that index can stay `""` — `auth_type: newapi_session` makes
+  the backend look up each user's own stored new-api OAuth token (from
+  `OAuthSessions`, populated by `newapi_callback`) instead of using a shared key.
+
+- **`WEBUI_AUTH_COOKIE_SAME_SITE`.** If a deployment sets this to `strict`, the
+  cross-navigation redirect chain that `newapi_callback` relies on (new-api →
+  `/auth/newapi/callback` → `/auth` with `Set-Cookie: token=...`) can have that
+  cookie dropped by the browser before `oauthCallbackHandler()`
+  (`src/routes/auth/+page.svelte`) ever reads it via `document.cookie`, since the
+  cookie is being set in what the browser sees as a cross-site top-level
+  navigation. Leave this at its default (`lax`) for new-api SSO deployments;
+  `strict` is not supported by this flow.
+
+- **Known limitation: `redirectPath` is not preserved through new-api SSO.**
+  For the standard login form and generic OAuth flow, `?redirect=` on `/auth`
+  is stashed into `localStorage.redirectPath` (see the `onMount` handler in
+  `src/routes/auth/+page.svelte`) and consumed after sign-in to land the user
+  back on a specific chat. The new-api IdP-initiated flow has no equivalent:
+  new-api's own "Open in Chat App" link carries no redirect target for
+  OpenWebUI to round-trip, and `newapi_callback` always redirects to bare
+  `/auth`. A user who had a specific chat open (if that's even a supported
+  entry point from new-api's side) lands on `/` after SSO login, not back on
+  that chat. This is an accepted limitation of the current integration, not a
+  bug to fix here — closing it properly would require new-api's own link
+  generation to carry and round-trip a redirect target, which is outside this
+  codebase's control.
