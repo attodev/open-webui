@@ -211,3 +211,51 @@ async def test_callback_never_creates_a_user_on_userinfo_failure(db_engine, asyn
 
     async with AsyncSessionLocal() as db:
         assert await Users.get_num_users(db=db) == 0
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_to_server_error_on_concurrent_new_user_race(db_engine, async_client):
+    """
+    Two concurrent IdP-initiated logins for the same brand-new email (e.g. a
+    double-clicked "Open in Chat" link) can both pass the
+    `Users.get_user_by_email` pre-check before either commits, then both
+    attempt `Auths.insert_new_auth` — the loser trips the unique-email
+    constraint as a `sqlalchemy.exc.IntegrityError`.
+
+    We simulate the loser's request deterministically: a user with the
+    target email is already committed (standing in for the winner's
+    request, which finished first), and `Users.get_user_by_email` is forced
+    to still report "no such user" — exactly what it would have returned at
+    the moment the loser's request actually ran that check, before the
+    winner committed. That forces this request down the "create new user"
+    path against an email that the database will now reject.
+    """
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    async with AsyncSessionLocal() as db:
+        await Users.insert_new_user(id='user-racer-winner', name='Erin', email='erin@example.com', role='user', db=db)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-erin', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={'sub': 'newapi-user-erin', 'email': 'erin@example.com', 'name': 'Erin', 'is_admin': False}
+            ),
+        ),
+        patch('open_webui.routers.newapi_sso.Users.get_user_by_email', new=AsyncMock(return_value=None)),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=server_error'
+    assert 'token' not in res.cookies
+
+    async with AsyncSessionLocal() as db:
+        # Only the winner's account exists — the loser's request never created a duplicate.
+        assert await Users.get_num_users(db=db) == 1

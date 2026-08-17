@@ -25,6 +25,7 @@ from open_webui.models.users import Users
 from open_webui.utils.auth import get_password_hash
 from open_webui.utils.groups import apply_default_group_assignment
 from open_webui.utils.newapi_oauth import NewapiOAuthError, exchange_code_for_token, fetch_userinfo
+from sqlalchemy.exc import IntegrityError
 
 log = logging.getLogger(__name__)
 
@@ -112,11 +113,23 @@ async def newapi_callback(request: Request, code: str, state: str = ''):
                 log.info('new-api SSO callback failed (%s): %s', e.reason, e)
             return RedirectResponse(url=_reconnect_redirect(e.reason), status_code=302)
 
-        user = await _provision_or_login_user(userinfo, db)
-        await _store_newapi_token(user.id, token_response['access_token'], token_response['expires_in'], db)
+        try:
+            user = await _provision_or_login_user(userinfo, db)
+            await _store_newapi_token(user.id, token_response['access_token'], token_response['expires_in'], db)
 
-        response = RedirectResponse(url='/', status_code=302)
-        await create_session_response(
-            request, user, db, response=response, set_cookie=True, source='newapi_sso', expires_delta=NEWAPI_SESSION_TTL
-        )
-        return response
+            response = RedirectResponse(url='/', status_code=302)
+            await create_session_response(
+                request, user, db, response=response, set_cookie=True, source='newapi_sso', expires_delta=NEWAPI_SESSION_TTL
+            )
+            return response
+        except IntegrityError as e:
+            # Two concurrent IdP-initiated logins for the same brand-new
+            # email (e.g. a double-clicked "Open in Chat" link) can both
+            # pass the pre-checks above before either commits, then both
+            # attempt to create the user — the loser trips the unique-email
+            # constraint here. The race window is tiny, so a retry with a
+            # fresh code from new-api almost always succeeds; this is not a
+            # routine failure mode, so log it more assertively than the
+            # invalid_grant/network_error branches above.
+            log.error('new-api SSO provisioning hit a database integrity error (likely a concurrent login race): %s', e)
+            return RedirectResponse(url=_reconnect_redirect('server_error'), status_code=302)
