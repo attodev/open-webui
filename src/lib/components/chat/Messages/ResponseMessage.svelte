@@ -52,6 +52,7 @@
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
 	import Error from './Error.svelte';
+	import NewapiReconnectBanner from './NewapiReconnectBanner.svelte';
 	import Citations from './Citations.svelte';
 	import CodeExecutions from './CodeExecutions.svelte';
 	import ContentRenderer from './ContentRenderer.svelte';
@@ -876,7 +877,11 @@
 							{/if}
 
 							{#if message?.error}
-								<Error content={message?.error?.content ?? message.content} />
+								{#if message?.error?.content === 'NEWAPI_RECONNECT_REQUIRED'}
+									<NewapiReconnectBanner />
+								{:else}
+									<Error content={message?.error?.content ?? message.content} />
+								{/if}
 							{/if}
 
 							{#if (message?.sources || message?.citations) && (model?.info?.meta?.capabilities?.citations ?? true)}
