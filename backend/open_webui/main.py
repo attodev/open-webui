@@ -85,6 +85,9 @@ from open_webui.env import (
     ENABLE_EASTER_EGGS,
     ENABLE_PLUGINS,
     EXTERNAL_PWA_MANIFEST_URL,
+    # New API SSO
+    ENABLE_NEWAPI_SSO,
+    NEWAPI_ENTRY_URL,
     # OAuth Back-Channel Logout
     ENABLE_OAUTH_BACKCHANNEL_LOGOUT,
     ENABLE_OTEL,
@@ -154,6 +157,7 @@ from open_webui.routers import (
     knowledge,
     memories,
     models,
+    newapi_sso,
     notifications,
     notes,
     ollama,
@@ -796,6 +800,7 @@ app.include_router(retrieval.router, prefix='/api/v1/retrieval', tags=['retrieva
 app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])
 
 app.include_router(auths.router, prefix='/api/v1/auths', tags=['auths'])
+app.include_router(newapi_sso.router, prefix='/auth/newapi', tags=['newapi_sso'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 
 
@@ -2161,6 +2166,13 @@ async def get_app_config(request: Request):
                 else {}
             ),
             'auto_redirect': config.get('oauth.auto_redirect'),
+        },
+        'newapi_sso': {
+            # Hide the entry URL when the feature is disabled, mirroring how
+            # OAuth providers are hidden above, so a disabled integration
+            # doesn't leak its target URL to unauthenticated clients.
+            'enable': ENABLE_NEWAPI_SSO,
+            'entry_url': NEWAPI_ENTRY_URL if ENABLE_NEWAPI_SSO else '',
         },
         'features': {
             # --- Public: required by login/signup page pre-auth ---
