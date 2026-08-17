@@ -21,8 +21,13 @@ from open_webui.env import (
     DATA_DIR,
     DATABASE_URL,
     ENABLE_DB_MIGRATIONS,
+    ENABLE_NEWAPI_SSO,
     ENV,
     FRONTEND_BUILD_DIR,
+    NEWAPI_ENTRY_URL,
+    NEWAPI_OAUTH_BASE_URL,
+    NEWAPI_OAUTH_CLIENT_ID,
+    NEWAPI_OAUTH_CLIENT_SECRET,
     OFFLINE_MODE,
     OPEN_WEBUI_DIR,
     REDIS_KEY_PREFIX,
@@ -1627,6 +1632,42 @@ ENABLE_LOGIN_FORM = os.getenv('ENABLE_LOGIN_FORM', 'True').lower() == 'true'
 ENABLE_PASSWORD_CHANGE_FORM = os.getenv('ENABLE_PASSWORD_CHANGE_FORM', 'True').lower() == 'true'
 
 ENABLE_PASSWORD_AUTH = os.getenv('ENABLE_PASSWORD_AUTH', 'True').lower() == 'true'
+
+if ENABLE_NEWAPI_SSO:
+    # Loud-but-not-fatal: unlike WEBUI_SECRET_KEY (a hard requirement when
+    # auth is on), a missing new-api value doesn't have to crash the whole
+    # app — it should just be impossible to miss in the logs, since
+    # otherwise the only signal is a per-request network_error redirect
+    # once a user actually tries to sign in.
+    _missing_newapi_sso_vars = [
+        name
+        for name, value in (
+            ('NEWAPI_OAUTH_BASE_URL', NEWAPI_OAUTH_BASE_URL),
+            ('NEWAPI_OAUTH_CLIENT_ID', NEWAPI_OAUTH_CLIENT_ID),
+            ('NEWAPI_OAUTH_CLIENT_SECRET', NEWAPI_OAUTH_CLIENT_SECRET),
+            ('NEWAPI_ENTRY_URL', NEWAPI_ENTRY_URL),
+        )
+        if not value
+    ]
+    if _missing_newapi_sso_vars:
+        log.warning(
+            'ENABLE_NEWAPI_SSO is true but the following required env var(s) are empty: %s. '
+            'new-api SSO logins will fail (surfacing as a network_error redirect) until these are set.',
+            ', '.join(_missing_newapi_sso_vars),
+        )
+
+    # ENABLE_NEWAPI_SSO and ENABLE_PASSWORD_AUTH are intentionally
+    # independent, separate design decisions (see the design spec) — this
+    # is a warning only, never auto-coupling the two flags. An operator who
+    # enables new-api SSO but leaves password auth on (its default) most
+    # likely meant new-api to be the only sign-in path and simply forgot
+    # this second flag.
+    if ENABLE_PASSWORD_AUTH:
+        log.warning(
+            'ENABLE_NEWAPI_SSO is true and ENABLE_PASSWORD_AUTH is still true (its default). '
+            'If new-api SSO is meant to be the only sign-in method for this deployment, also set '
+            'ENABLE_PASSWORD_AUTH=False — these flags are not automatically coupled.'
+        )
 
 DEFAULT_LOCALE = os.getenv('DEFAULT_LOCALE', '')
 
