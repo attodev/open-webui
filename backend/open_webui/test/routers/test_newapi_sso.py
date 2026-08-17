@@ -78,6 +78,44 @@ async def test_callback_creates_new_user_and_stores_token(db_engine, async_clien
 
 
 @pytest.mark.asyncio
+async def test_callback_lowercases_email_on_new_user_creation(db_engine, async_client):
+    """
+    Every other account-creation path in this codebase lowercases email
+    first (finding M3) — new-api's userinfo claim should be no exception,
+    even though new-api itself happened to send mixed case here.
+    """
+    app = FastAPI()
+    _mount(app)
+    async_client._transport = ASGITransport(app=app)
+
+    with (
+        patch(
+            'open_webui.routers.newapi_sso.exchange_code_for_token',
+            new=AsyncMock(return_value={'access_token': 'sk-mixed', 'expires_in': 86400}),
+        ),
+        patch(
+            'open_webui.routers.newapi_sso.fetch_userinfo',
+            new=AsyncMock(
+                return_value={
+                    'sub': 'newapi-user-mixed',
+                    'email': 'Mixed.Case@Example.COM',
+                    'name': 'Mixed Case',
+                    'is_admin': False,
+                }
+            ),
+        ),
+    ):
+        res = await async_client.get('/auth/newapi/callback?code=abc123', follow_redirects=False)
+
+    assert res.status_code == 302
+
+    async with AsyncSessionLocal() as db:
+        user = await Users.get_user_by_oauth_sub('newapi', 'newapi-user-mixed', db=db)
+        assert user is not None
+        assert user.email == 'mixed.case@example.com'
+
+
+@pytest.mark.asyncio
 async def test_callback_success_cookie_is_readable_by_frontend_js(db_engine, async_client):
     """
     Regression test for the bug where a successful login never reached the
