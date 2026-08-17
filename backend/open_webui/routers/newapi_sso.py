@@ -129,7 +129,17 @@ async def newapi_callback(request: Request, code: str = '', state: str = ''):
         # "disabled" from "misconfigured" for an unauthenticated caller.
         return RedirectResponse(url='/auth', status_code=302)
 
-    if newapi_callback_rate_limiter.is_limited(request.client.host if request.client else 'unknown'):
+    # Namespaced (not just the raw IP): RateLimiter._bucket_key builds its
+    # key from nothing but this string, and _memory_store (as well as the
+    # Redis key format) is shared across every RateLimiter instance in the
+    # process. Without a limiter-specific prefix, this counter would be
+    # silently shared with any other IP-keyed limiter — e.g. auths.py's
+    # token_exchange_rate_limiter, which is keyed by the exact same
+    # `request.client.host if request.client else 'unknown'` expression —
+    # for any client that hits both endpoints, making both limiters' configured
+    # thresholds meaningless.
+    client_host = request.client.host if request.client else 'unknown'
+    if newapi_callback_rate_limiter.is_limited(f'newapi_callback:{client_host}'):
         return RedirectResponse(url=_reconnect_redirect('rate_limited'), status_code=302)
 
     if not code:

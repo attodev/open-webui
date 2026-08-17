@@ -527,3 +527,66 @@ async def test_callback_redirects_gracefully_on_unexpected_exception_during_toke
     assert res.status_code == 302
     assert res.headers['location'] == '/auth?error=newapi_sso_failed&reason=server_error'
     assert 'token' not in res.cookies
+
+
+def test_callback_rate_limiter_key_is_namespaced():
+    """
+    Regression test (final-review finding): the callback used to call
+    `newapi_callback_rate_limiter.is_limited(request.client.host ...)` with
+    the raw IP as the key. RateLimiter._bucket_key builds its Redis/memory
+    key from nothing but that string, so any other IP-keyed RateLimiter
+    instance in the process — e.g. auths.py's token_exchange_rate_limiter,
+    which is keyed by the exact same `request.client.host if request.client
+    else 'unknown'` expression — would silently share this counter for any
+    client that hits both endpoints. Asserting the call site's key carries
+    this limiter's own namespace prefix is what prevents that collision.
+    """
+
+    class _Request:
+        class client:
+            host = '203.0.113.42'
+
+    with patch(
+        'open_webui.routers.newapi_sso.newapi_callback_rate_limiter.is_limited',
+        return_value=False,
+    ) as mock_is_limited:
+        import asyncio
+
+        from open_webui.routers.newapi_sso import newapi_callback
+
+        asyncio.run(newapi_callback(_Request(), code=''))
+
+    mock_is_limited.assert_called_once_with('newapi_callback:203.0.113.42')
+
+
+def test_two_ip_keyed_rate_limiters_sharing_the_memory_store_do_not_collide_once_namespaced():
+    """
+    Same finding, verified against the actual shared-state mechanism:
+    RateLimiter._memory_store is a class attribute shared by every
+    instance, so two independent RateLimiter objects — one standing in for
+    this callback, one for another IP-keyed endpoint like
+    auths.py's token_exchange_rate_limiter — must not observe each other's
+    hits once each is called with its own namespaced key, even for the
+    same raw client IP.
+    """
+    RateLimiter._memory_store.clear()
+
+    callback_limiter = RateLimiter(redis_client=None, limit=5, window=180)
+    other_endpoint_limiter = RateLimiter(redis_client=None, limit=5, window=180)
+
+    raw_ip = '203.0.113.42'
+
+    # Drive the callback limiter's namespaced key past its limit.
+    for _ in range(callback_limiter.limit):
+        assert not callback_limiter.is_limited(f'newapi_callback:{raw_ip}')
+    assert callback_limiter.is_limited(f'newapi_callback:{raw_ip}')
+
+    # A separate limiter for a separate endpoint, keyed on the *same* raw
+    # IP but under its own namespace, must start from zero rather than
+    # inheriting the callback limiter's count.
+    assert other_endpoint_limiter.get_count(f'other_endpoint:{raw_ip}') == 0
+    assert not other_endpoint_limiter.is_limited(f'other_endpoint:{raw_ip}')
+
+    # Sanity check: without namespacing, the two calls above would have
+    # been the exact same key and this test would fail.
+    assert f'newapi_callback:{raw_ip}' != f'other_endpoint:{raw_ip}'
