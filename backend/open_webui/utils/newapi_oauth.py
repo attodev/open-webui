@@ -64,7 +64,15 @@ async def exchange_code_for_token(code: str) -> dict:
 
 
 async def fetch_userinfo(access_token: str) -> dict:
-    """GET /oauth2/userinfo. Returns {'sub', 'email', 'name', 'is_admin'}."""
+    """GET /oauth2/userinfo. Returns {'sub', 'email', 'name', 'is_admin'}.
+
+    `email` is optional on new-api's side (not required at signup, and
+    mutable afterward) -- only `sub` is treated as required here, since
+    that's the durable identity new-api guarantees. Account matching in
+    newapi_sso.py's _provision_or_login_user already keys off `sub`, not
+    email; `email` may come back as '' or None and callers must handle
+    that (see _provision_or_login_user's placeholder-email fallback).
+    """
     try:
         session = await get_session()
         async with session.get(
@@ -76,14 +84,14 @@ async def fetch_userinfo(access_token: str) -> dict:
                 log.error('Unexpected new-api userinfo response: %s %s', response.status, payload)
                 raise NewapiOAuthError('network_error', f'Unexpected response status {response.status}')
             sub = payload.get('sub')
-            email = payload.get('email')
-            if not sub or not email:
-                log.error("new-api userinfo response missing 'sub' or 'email': %s", payload)
-                raise NewapiOAuthError('invalid_userinfo', "Response missing 'sub' or 'email'")
+            if not sub:
+                log.error("new-api userinfo response missing 'sub': %s", payload)
+                raise NewapiOAuthError('invalid_userinfo', "Response missing 'sub'")
+            email = payload.get('email') or ''
             return {
                 'sub': sub,
                 'email': email,
-                'name': payload.get('name') or email,
+                'name': payload.get('name') or email or f'new-api user {sub}',
                 'is_admin': bool(payload.get('is_admin', False)),
             }
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:

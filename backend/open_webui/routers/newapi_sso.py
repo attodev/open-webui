@@ -62,29 +62,48 @@ def _reconnect_redirect(reason: str) -> str:
 
 async def _provision_or_login_user(userinfo: dict, db):
     """Look up by oauth sub, fall back to email, else create. Never trusts caller-supplied identity beyond `userinfo`."""
-    # Every other account-creation path in this codebase lowercases email
-    # first; Users.get_user_by_email is already case-insensitive so this
-    # doesn't change lookup behavior, only what gets stored for a new user.
-    email = userinfo['email'].lower()
+    # new-api treats email as optional (not required at signup) and
+    # mutable afterward -- only `sub` is a durable identity we can rely
+    # on for matching. When new-api didn't supply an email, synthesize a
+    # stable, sub-derived placeholder so OpenWebUI's own schema (email is
+    # NOT NULL/UNIQUE) is satisfied without ever trusting an email we
+    # didn't actually receive. Every other account-creation path in this
+    # codebase lowercases email first; Users.get_user_by_email is already
+    # case-insensitive so this doesn't change lookup behavior for real
+    # emails, only what gets stored for a new user.
+    raw_email = (userinfo['email'] or '').strip()
+    has_real_email = bool(raw_email)
+    email = raw_email.lower() if has_real_email else f'newapi-{userinfo["sub"]}@newapi.local'
 
     user = await Users.get_user_by_oauth_sub('newapi', userinfo['sub'], db=db)
-    if not user and await Config.get('oauth.merge_accounts_by_email'):
+    if not user and has_real_email and await Config.get('oauth.merge_accounts_by_email'):
         # Mirrors the standard OAuth callback's own check in utils/oauth.py
         # (OAUTH_MERGE_ACCOUNTS_BY_EMAIL) before linking into an existing,
         # otherwise-unrelated account by email match. new-api is still the
         # trusted IdP regardless of this flag — when it's off we simply
-        # provision a fresh account instead, we never deny access.
+        # provision a fresh account instead, we never deny access. Only
+        # attempted with a real email from new-api -- a synthesized
+        # placeholder was never a signal about the user's identity, so it
+        # must never be used to link into someone else's account.
         existing_by_email = await Users.get_user_by_email(email, db=db)
         if existing_by_email:
             await Users.update_user_oauth_by_id(existing_by_email.id, 'newapi', userinfo['sub'], db=db)
             user = await Users.get_user_by_id(existing_by_email.id, db=db)
 
     if not user:
+        # Always 'user', never Config's ui.default_user_role: new-api has
+        # already authenticated this person (that's the entire point of
+        # this SSO flow), so gating them behind a *second*, local
+        # "pending admin approval" step -- which is what
+        # ui.default_user_role is set to in a typical deployment -- would
+        # defeat the "log in once, via new-api" design. This only affects
+        # accounts provisioned through this callback; local/other-provider
+        # signups (if ever re-enabled) still follow the configured default.
         user = await Auths.insert_new_auth(
             email=email,
             password=await get_password_hash(str(uuid.uuid4())),  # random, never used to sign in
             name=userinfo['name'],
-            role=await Config.get('ui.default_user_role'),
+            role='user',
             oauth={'newapi': {'sub': userinfo['sub']}},
             db=db,
         )
