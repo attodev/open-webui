@@ -23,7 +23,7 @@ class OpenWebUIClient:
             raise OpenWebUIError(f"Could not reach Open WebUI at {self._base_url}: {e}") from e
 
         if resp.status_code == 401:
-            raise OpenWebUIError("Open WebUI rejected the API key (401). Check OPEN_WEBUI_API_KEY.")
+            raise OpenWebUIError("Open WebUI rejected the API key (401). Check OPENWEBUI_API_KEY.")
         if resp.status_code in (403, 404):
             raise OpenWebUIError(
                 f"No access to this resource ({resp.status_code}). "

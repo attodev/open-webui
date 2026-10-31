@@ -88,8 +88,9 @@ async def test_bearer_header_sent():
 @respx.mock
 async def test_401_maps_to_auth_error():
     respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(401))
-    with pytest.raises(OpenWebUIError, match="API key"):
+    with pytest.raises(OpenWebUIError, match="API key") as exc:
         await make().list_knowledge()
+    assert "OPENWEBUI_API_KEY" in str(exc.value)
 
 
 @pytest.mark.parametrize("status", [403, 404])
