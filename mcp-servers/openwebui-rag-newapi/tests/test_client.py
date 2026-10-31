@@ -1,0 +1,149 @@
+import httpx
+import pytest
+import respx
+
+from openwebui_rag_mcp_newapi.client import OpenWebUIClient, OpenWebUIError
+
+BASE = "http://owui.test"
+
+
+class FakeProvider:
+    def __init__(self, tokens=("sk-test",)):
+        self.tokens = list(tokens)
+        self.i = 0
+        self.invalidated = 0
+
+    async def get_token(self):
+        return self.tokens[min(self.i, len(self.tokens) - 1)]
+
+    async def invalidate(self):
+        self.invalidated += 1
+        self.i += 1
+
+
+def make(provider=None):
+    return OpenWebUIClient(BASE, provider or FakeProvider())
+
+
+def items(start, n):
+    return [{"id": f"id{i}", "name": f"n{i}", "description": "d", "extra": 1} for i in range(start, start + n)]
+
+
+@respx.mock
+async def test_list_paginates():
+    route = respx.get(f"{BASE}/api/v1/knowledge/")
+    route.side_effect = [
+        httpx.Response(200, json={"items": items(0, 30), "total": 35}),
+        httpx.Response(200, json={"items": items(30, 5), "total": 35}),
+    ]
+    result = await make().list_knowledge()
+    assert len(result) == 35
+    assert set(result[0]) == {"id", "name", "description"}
+    assert route.calls[1].request.url.params["page"] == "2"
+
+
+@respx.mock
+async def test_list_accepts_bare_list():
+    respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(200, json=items(0, 2)))
+    result = await make().list_knowledge()
+    assert [r["id"] for r in result] == ["id0", "id1"]
+
+
+@respx.mock
+async def test_query_flattens():
+    respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "documents": [["a", "b"]],
+                "metadatas": [[{"name": "f1.pdf"}, {"source": "f2"}]],
+                "distances": [[0.4, 0.9]],
+            },
+        )
+    )
+    result = await make().query(["c1"], "q", 5)
+    assert result == [
+        {"content": "b", "source": "f2", "score": 0.9},
+        {"content": "a", "source": "f1.pdf", "score": 0.4},
+    ]
+
+
+@respx.mock
+async def test_query_source_unknown():
+    respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(
+        return_value=httpx.Response(
+            200, json={"documents": [["a"]], "metadatas": [[{}]], "distances": [[0.1]]}
+        )
+    )
+    result = await make().query(["c1"], "q", None)
+    assert result[0]["source"] == "unknown"
+
+
+@respx.mock
+async def test_query_omits_k_when_none():
+    route = respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(
+        return_value=httpx.Response(200, json={"documents": [[]], "metadatas": [[]], "distances": [[]]})
+    )
+    await make().query(["c1"], "q", None)
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert "k" not in body
+    assert body == {"collection_names": ["c1"], "query": "q"}
+
+
+@respx.mock
+async def test_bearer_header_sent():
+    route = respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(200, json=[]))
+    await make().list_knowledge()
+    assert route.calls[0].request.headers["Authorization"] == "Bearer sk-test"
+
+
+@respx.mock
+async def test_401_persistent_raises_after_one_retry():
+    route = respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(401))
+    prov = FakeProvider(["j1", "j2"])
+    with pytest.raises(OpenWebUIError, match="401"):
+        await make(prov).list_knowledge()
+    assert route.call_count == 2
+    assert prov.invalidated == 1
+
+
+@respx.mock
+async def test_401_reexchange_once():
+    route = respx.get(f"{BASE}/api/v1/knowledge/")
+    route.side_effect = [httpx.Response(401), httpx.Response(200, json=items(0, 1))]
+    prov = FakeProvider(["old", "new"])
+    result = await make(prov).list_knowledge()
+    assert len(result) == 1
+    assert prov.invalidated == 1
+    assert route.calls[0].request.headers["Authorization"] == "Bearer old"
+    assert route.calls[1].request.headers["Authorization"] == "Bearer new"
+
+
+@pytest.mark.parametrize("status", [403, 404])
+@respx.mock
+async def test_403_maps_to_access_error(status):
+    respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(return_value=httpx.Response(status))
+    with pytest.raises(OpenWebUIError, match="access"):
+        await make().query(["c1"], "q", None)
+
+
+@respx.mock
+async def test_list_wrong_shape_raises():
+    respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(200, json="oops"))
+    with pytest.raises(OpenWebUIError, match="unexpected response"):
+        await make().list_knowledge()
+
+
+@respx.mock
+async def test_list_bare_list_ok():
+    respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(200, json=items(0, 2)))
+    assert len(await make().list_knowledge()) == 2
+
+
+@respx.mock
+async def test_query_wrong_shape_raises():
+    respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(return_value=httpx.Response(200, json=[1]))
+    with pytest.raises(OpenWebUIError, match="unexpected response"):
+        await make().query(["a"], "q", None)

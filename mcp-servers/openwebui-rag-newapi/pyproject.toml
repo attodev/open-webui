@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openwebui-rag-mcp-newapi"
+version = "0.1.0"
+description = "MCP server exposing Open WebUI knowledge bases for RAG, authenticated via newapi keys"
+requires-python = ">=3.10"
+dependencies = ["httpx>=0.27", "mcp>=2.3,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "respx"]
+
+[project.scripts]
+openwebui-rag-mcp-newapi = "openwebui_rag_mcp_newapi.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
