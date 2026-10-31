@@ -172,7 +172,7 @@ async def test_eviction_max_entries():
     for k in ("sk-1", "sk-2", "sk-3"):
         await b.get_jwt(k)
     assert len(b._cache) == 2
-    assert len(b._locks) <= 2
+    assert len(b._locks) == 0
     assert n.call_count == 3
     await b.get_jwt("sk-3")  # still cached
     assert n.call_count == 3
@@ -191,3 +191,32 @@ async def test_invalidate_and_provider():
     await p.invalidate()
     await p.get_token()
     assert n.call_count == 2
+
+
+@respx.mock
+async def test_concurrent_invalid_key_cleans_locks():
+    respx.post(NEWAPI_URL).mock(return_value=httpx.Response(401))
+    b = broker()
+    results = await asyncio.gather(*[b.get_jwt("sk-bad") for _ in range(10)], return_exceptions=True)
+    assert all(isinstance(r, AuthError) for r in results)
+    assert b._locks == {}
+
+
+@respx.mock
+async def test_many_failing_keys_leave_no_locks():
+    respx.post(NEWAPI_URL).mock(return_value=httpx.Response(401))
+    b = broker()
+    for i in range(50):
+        with pytest.raises(AuthError):
+            await b.get_jwt(f"sk-bad-{i}")
+    assert b._locks == {}
+
+
+@respx.mock
+async def test_non_numeric_expires_at_falls_back():
+    respx.post(NEWAPI_URL).mock(return_value=newapi_ok())
+    e = respx.post(EXCHANGE_URL).mock(return_value=exchange_ok(expires_at="never"))
+    b = broker()
+    await b.get_jwt("sk-a")
+    await b.get_jwt("sk-a")
+    assert e.call_count == 1

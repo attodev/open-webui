@@ -99,7 +99,74 @@ class TokenBroker:
         self._timeout = timeout
         self._max = max_entries
         self._cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks: dict[str, list] = {}  # key -> [Lock, refcount]
+
+    def __repr__(self) -> str:
+        return f"TokenBroker(entries={len(self._cache)})"
+
+    @staticmethod
+    def _key(api_key: str) -> str:
+        return hashlib.sha256(api_key.encode()).hexdigest()
+
+    def for_key(self, api_key: str) -> TokenProvider:
+        return TokenProvider(self, api_key)
+
+    def _cached(self, k: str) -> str | None:
+        entry = self._cache.get(k)
+        if entry and entry[1] - REFRESH_MARGIN > _now():
+            self._cache.move_to_end(k)
+            return entry[0]
+        return None
+
+    async def get_jwt(self, api_key: str) -> str:
+        k = self._key(api_key)
+        if (jwt := self._cached(k)) is not None:
+            return jwt
+        entry = self._locks.setdefault(k, [asyncio.Lock(), 0])
+        entry[1] += 1
+        try:
+            async with entry[0]:
+                if (jwt := self._cached(k)) is not None:
+                    return jwt
+                jwt, expiry = await self._fetch(api_key)
+                self._cache[k] = (jwt, expiry)
+                self._cache.move_to_end(k)
+                self._evict()
+                return jwt
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0 and self._locks.get(k) is entry:
+                del self._locks[k]
+
+    def _evict(self) -> None:
+        while len(self._cache) > self._max:
+            self._cache.popitem(last=False)
+
+    async def invalidate(self) -> None:
+        await self._broker.invalidate(self._api_key)
+
+    def __repr__(self) -> str:
+        return "TokenProvider(<redacted>)"
+
+
+class TokenBroker:
+    def __init__(
+        self,
+        openwebui_url: str,
+        newapi_url: str,
+        newapi_token_path: str,
+        provider: str,
+        timeout: float = 30.0,
+        max_entries: int = 1000,
+    ):
+        self._exchange_url = (
+            f"{openwebui_url.rstrip('/')}/api/v1/auths/oauth/{provider}/token/exchange"
+        )
+        self._newapi_url = f"{newapi_url.rstrip('/')}{newapi_token_path}"
+        self._timeout = timeout
+        self._max = max_entries
+        self._cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        self._locks: dict[str, list] = {}  # key -> [Lock, refcount]
 
     def __repr__(self) -> str:
         return f"TokenBroker(entries={len(self._cache)})"
@@ -148,7 +215,7 @@ class TokenBroker:
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as http:
                 return await http.post(url, **kwargs)
-        except httpx.TimeoutException as e:
+        except httpx.TimeoutException:
             raise AuthError("인증 서버 요청 시간이 초과되었습니다") from None
         except httpx.HTTPError:
             raise AuthError("인증 서버에 연결할 수 없습니다") from None
@@ -173,5 +240,8 @@ class TokenBroker:
         if not jwt:
             raise AuthError(_NO_TOKEN)
         expires_at = data.get("expires_at")
-        expiry = float(expires_at) if expires_at else _now() + DEFAULT_TTL
+        try:
+            expiry = float(expires_at) if expires_at else _now() + DEFAULT_TTL
+        except (TypeError, ValueError):
+            expiry = _now() + DEFAULT_TTL
         return jwt, expiry
