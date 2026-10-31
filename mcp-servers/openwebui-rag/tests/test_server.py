@@ -74,6 +74,13 @@ def test_http_mode_uses_header_key(monkeypatch):
     assert server.get_api_key(ctx({"authorization": "Bearer sk-user"})) == "sk-user"
 
 
+def test_http_mode_no_header_ignores_env_key(monkeypatch):
+    monkeypatch.setenv("MCP_TRANSPORT", "http")
+    monkeypatch.setenv("OPENWEBUI_API_KEY", "sk-env")
+    with pytest.raises(OpenWebUIError, match="No API key"):
+        server.get_api_key(ctx())
+
+
 def test_stdio_uses_env_key():
     assert server.get_api_key(ctx()) == "sk-env"
 

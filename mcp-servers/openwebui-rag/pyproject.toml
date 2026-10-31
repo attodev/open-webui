@@ -7,7 +7,7 @@ name = "openwebui-rag-mcp"
 version = "0.1.0"
 description = "MCP server exposing Open WebUI knowledge bases for RAG"
 requires-python = ">=3.10"
-dependencies = ["httpx>=0.27", "mcp>=1.0"]
+dependencies = ["httpx>=0.27", "mcp>=2.3,<3"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "respx"]

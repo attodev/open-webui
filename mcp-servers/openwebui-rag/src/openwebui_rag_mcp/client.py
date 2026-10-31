@@ -43,8 +43,12 @@ class OpenWebUIClient:
             data = await self._request("GET", "/api/v1/knowledge/", params={"page": page})
             if isinstance(data, list):
                 batch, total = data, None
-            else:
+            elif isinstance(data, dict):
                 batch, total = data.get("items", []), data.get("total")
+            else:
+                raise OpenWebUIError("Open WebUI returned an unexpected response shape for the knowledge list")
+            if not isinstance(batch, list):
+                raise OpenWebUIError("Open WebUI returned an unexpected response shape for the knowledge list")
             collected.extend(batch)
             if not batch or total is None or len(collected) >= total:
                 break
@@ -59,6 +63,8 @@ class OpenWebUIClient:
         if k is not None:
             body["k"] = k
         data = await self._request("POST", "/api/v1/retrieval/query/collection", json=body)
+        if not isinstance(data, dict):
+            raise OpenWebUIError("Open WebUI returned an unexpected response shape for the query")
         docs = (data.get("documents") or [[]])[0]
         metas = (data.get("metadatas") or [[]])[0]
         dists = (data.get("distances") or [[]])[0]

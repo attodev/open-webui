@@ -44,11 +44,13 @@ pip install .
 
 ### Claude Desktop (`claude_desktop_config.json`)
 
+Claude Desktop은 셸의 `PATH`를 상속하지 않으므로, `command`에는 venv 안의 `openwebui-rag-mcp` 실행 파일의 절대 경로를 사용하세요 (예: `/path/to/.venv/bin/openwebui-rag-mcp`).
+
 ```json
 {
   "mcpServers": {
     "openwebui-rag": {
-      "command": "openwebui-rag-mcp",
+      "command": "/path/to/.venv/bin/openwebui-rag-mcp",
       "env": {
         "OPENWEBUI_URL": "http://localhost:8080",
         "OPENWEBUI_API_KEY": "sk-..."
@@ -113,7 +115,10 @@ services:
     environment:
       - OPENWEBUI_URL=http://open-webui:8080
     ports:
-      - "8000:8000"
+      # 기본은 호스트 로컬에서만 접근 가능합니다.
+      # 내부망에 열려면 "<내부망 IP>:8000:8000"으로 바꾸거나 "8000:8000"으로 모든 인터페이스에 공개하세요
+      # (방화벽/리버스 프록시로 접근을 제한할 것).
+      - "127.0.0.1:8000:8000"
     depends_on:
       - open-webui
 ```

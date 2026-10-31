@@ -99,3 +99,23 @@ async def test_403_maps_to_access_error(status):
     respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(return_value=httpx.Response(status))
     with pytest.raises(OpenWebUIError, match="access"):
         await make().query(["c1"], "q", None)
+
+
+@respx.mock
+async def test_list_wrong_shape_raises():
+    respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(200, json="oops"))
+    with pytest.raises(OpenWebUIError, match="unexpected response"):
+        await make().list_knowledge()
+
+
+@respx.mock
+async def test_list_bare_list_ok():
+    respx.get(f"{BASE}/api/v1/knowledge/").mock(return_value=httpx.Response(200, json=items(0, 2)))
+    assert len(await make().list_knowledge()) == 2
+
+
+@respx.mock
+async def test_query_wrong_shape_raises():
+    respx.post(f"{BASE}/api/v1/retrieval/query/collection").mock(return_value=httpx.Response(200, json=[1]))
+    with pytest.raises(OpenWebUIError, match="unexpected response"):
+        await make().query(["a"], "q", None)
