@@ -117,7 +117,12 @@ class Session:
     def login(self, user, pw):
         j = self.call("POST", "/api/user/login", {"username": user, "password": pw})
         if not j.get("success"): return False
-        self.user_id = j["data"]["id"]; return True
+        d = j.get("data") or {}
+        if d.get("require_2fa"):
+            die(f"{user} 계정에 2FA 가 켜져 있어 자동 로그인할 수 없습니다. 2FA 를 끄거나 DB 를 초기화하세요")
+        if "id" not in d:
+            die(f"new-api 로그인 응답에 사용자 id 가 없습니다: {str(j)[:300]}")
+        self.user_id = d["id"]; return True
 
 for _ in range(60):
     try:
