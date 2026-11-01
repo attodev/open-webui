@@ -111,7 +111,8 @@ cp .env.example .env
 | 3 | PostgreSQL, Redis, new-api를 띄웁니다. |
 | 4 | new-api를 설정합니다. 아래 표를 보세요. |
 | 5 | Open WebUI와 MCP 서버를 띄우고 healthy가 될 때까지 기다립니다. |
-| 6 | 연동을 확인합니다. 아래 표를 보세요. |
+| 6 | **루트를 Open WebUI에 OIDC로 한 번 로그인시켜 Open WebUI 관리자로 만듭니다.** `NEW_API_ROOT_EMAIL`이 있을 때만 합니다. 실행하는 머신에서 `PUBLIC_HOST`가 풀려야 합니다. |
+| 7 | 연동을 확인합니다. 아래 표를 보세요. |
 
 **단계 4: new-api 설정**
 
@@ -123,10 +124,11 @@ cp .env.example .env
 | relay | 서비스 키와 JWT 비밀을 설정합니다. |
 | API 키로 토큰 발급 | 기능을 켜고, client_id를 `openwebui-mcp`로 설정합니다. |
 
-**단계 6: 연동 확인**
+**단계 7: 연동 확인**
 - Open WebUI 컨테이너가 new-api discovery에 닿는지
 - Open WebUI 로그인이 new-api로 리다이렉트되는지
-- 토큰 교환과 token-from-key가 켜져 있는지
+- 토큰 교환이 켜져 있는지
+- token-from-key가 `401 invalid_key`로 정상 응답하는지. 이 기능이 없는 이전 버전 new-api는 HTML을 돌려주므로 여기서 걸러집니다
 - MCP 서버가 잘못된 키를 new-api에서 정상적으로 거부하는지
 
 끝에 접속 주소가 출력됩니다. 루트 비밀번호를 자동으로 만들었다면 그 비밀번호도 출력되며, `.env`에도 저장됩니다.
@@ -198,7 +200,7 @@ new-api 콘솔(`http://PUBLIC_HOST:NEW_API_PORT`)에 루트로 로그인해 **�
 
 **첫 로그인:** 그 사용자가 브라우저로 `http://PUBLIC_HOST:OPEN_WEBUI_PORT`를 엽니다. new-api 로그인 화면이 나오고, 로그인하면 Open WebUI로 돌아와 계정이 만들어집니다.
 
-**루트 계정:** 루트도 `NEW_API_ROOT_EMAIL`이 있으면 같은 방법으로 로그인할 수 있고, Open WebUI 관리자가 됩니다. 다만 관리자·루트는 relay 자동 연결 대상이 아닙니다. 그래서 Open WebUI 채팅 화면에 모델이 보이지 않을 수 있습니다. 이때는 new-api 사용자 편집 → "Open WebUI 연결"에서 수동으로 연결합니다(new-api README 6절). MCP 검색에는 relay 연결이 필요 없습니다.
+**루트 계정:** `NEW_API_ROOT_EMAIL`이 있으면 `bootstrap.sh`가 루트를 먼저 로그인시켜 두므로 **Open WebUI 관리자는 루트**가 됩니다. Open WebUI는 첫 계정을 무조건 관리자로 만들기 때문에, 이 단계가 없으면 처음 로그인한 사람이 관리자가 됩니다. 다만 관리자·루트는 relay 자동 연결 대상이 아닙니다. 그래서 Open WebUI 채팅 화면에 모델이 보이지 않을 수 있습니다. 이때는 new-api 사용자 편집 → "Open WebUI 연결"에서 수동으로 연결합니다(new-api README 6절). MCP 검색에는 relay 연결이 필요 없습니다.
 
 ### 5-3. MCP용 new-api 키 만들기
 
@@ -312,6 +314,9 @@ new-api와 Open WebUI 로그인·relay 자체의 문제는 new-api README 7절�
 | bootstrap: `로컬에 없는 이미지` | 1절대로 이미지를 준비하고, `.env`의 태그와 맞춥니다 |
 | bootstrap: `루트 로그인 실패` | 이미 초기화된 new-api인데 `.env`의 `NEW_API_ROOT_PASSWORD`가 그때 값과 다릅니다. 원래 값으로 되돌리거나 `docker compose down -v` 후 처음부터 실행합니다 |
 | bootstrap: `Open WebUI 컨테이너에서 … 에 닿지 않습니다` | 2절의 호스트 이름 문제입니다 |
+| bootstrap: `루트의 Open WebUI 로그인 실패` | bootstrap을 실행하는 머신에서 `http://PUBLIC_HOST:OPEN_WEBUI_PORT`에 닿지 않거나, 루트 이메일이 다른 사용자와 겹칩니다 |
+| bootstrap: `token-from-key 응답이 예상과 다릅니다` | new-api 이미지가 `bf236c829` 이전 버전입니다. 새로 빌드하고 `.env`의 `NEW_API_IMAGE`를 맞춥니다 |
+| 테스트 사용자가 Open WebUI 관리자가 됨 | 루트보다 먼저 로그인한 경우입니다. 해결 방법은 아래 순서대로입니다. ① 루트 이메일을 넣고 `./bootstrap.sh`를 다시 실행합니다. 루트가 로그인해 관리자가 됩니다. ② 그 테스트 사용자가 로그아웃했다가 다시 로그인하면 new-api 역할에 따라 `user`로 내려갑니다. 바로 바꾸려면 루트로 Admin Panel → Users에서 역할을 바꿉니다 |
 | `newapi 관리자가 'API 키로 토큰 발급' 기능을 켜야 합니다` | `./bootstrap.sh`를 다시 실행합니다 |
 | `newapi의 OIDC 제공자가 꺼져 있거나 …` | new-api 이미지가 `bf236c829` 이전 버전이거나 `oauth2.enabled`가 꺼져 있습니다 |
 | `newapi 계정에 이메일이 없습니다…` | 5-2의 이메일 등록 |

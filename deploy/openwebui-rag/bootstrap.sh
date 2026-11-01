@@ -7,7 +7,8 @@
 #   4. new-api 설정: 루트(관리자) 계정, Open WebUI 서비스 계정·토큰, OIDC 제공자(Open WebUI 로그인),
 #      relay JWT, API 키 → OIDC 토큰 발급(MCP), ServerAddress. 서비스 토큰 키를 .env 의 OWUI_SERVICE_KEY 에 기록
 #   5. Open WebUI·MCP 서버 기동 (.env 값으로)
-#   6. 연동 확인: Open WebUI → new-api discovery, OIDC 로그인 리다이렉트, 토큰 교환, MCP → new-api·Open WebUI
+#   6. 루트를 Open WebUI 에 OIDC 로 한 번 로그인시켜 Open WebUI 관리자로 만든다 (NEW_API_ROOT_EMAIL 이 있을 때)
+#   7. 연동 확인: Open WebUI → new-api discovery, OIDC 로그인 리다이렉트, 토큰 교환, MCP → new-api·Open WebUI
 #
 # 모델·임베딩 채널, 사용자, 지식 베이스는 만들지 않는다. 그 다음 할 일은 README 5절.
 #
@@ -21,7 +22,7 @@ fi
 
 exec python3 - "$@" <<'PY'
 import json, os, re, secrets, string, subprocess, sys, time
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
 from http.cookiejar import CookieJar
 
 ENV_FILE = ".env"
@@ -220,6 +221,33 @@ if st not in (302, 303, 307) or not loc.startswith(PUBLIC_NEWAPI + "/oauth2/auth
     die(f"Open WebUI 로그인이 new-api 로 리다이렉트되지 않습니다 (HTTP {st}, Location={loc})")
 log("확인: Open WebUI 로그인 → new-api /oauth2/authorize")
 
+def owui_oidc_login(session):
+    """브라우저와 같은 OIDC 로그인. Open WebUI 계정을 만들거나 역할을 갱신한다."""
+    jar = CookieJar()
+    ow = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), NoRedirect())
+    def get(url):
+        try:
+            with ow.open(urllib.request.Request(url), timeout=30) as r: return r.status, r.headers
+        except urllib.error.HTTPError as e: return e.code, e.headers
+    # 쿠키가 콜백 주소와 같은 호스트에 묶이도록 PUBLIC 주소로 시작한다
+    st, h = get(PUBLIC_OWUI + "/oauth/oidc/login")
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(h.get("Location") or "").query))
+    j = session.call("POST", "/api/oauth2/authorize", {k: q.get(k, "") for k in (
+        "response_type", "client_id", "redirect_uri", "scope", "state", "nonce", "code_challenge", "code_challenge_method")})
+    if not j.get("success"): return f"authorize 거부: {j.get('error')} {j.get('message', '')}"
+    st, h = get(j["data"]["redirect_url"])
+    if not any(c.name == "token" for c in jar):
+        return f"Open WebUI 콜백 실패 (HTTP {st}, Location={h.get('Location')})"
+    return None
+
+if E.get("NEW_API_ROOT_EMAIL"):
+    # 루트를 먼저 로그인시켜 Open WebUI 관리자로 만든다 (첫 계정은 무조건 admin, 이후엔 new-api 역할을 따른다)
+    err = owui_oidc_login(root)
+    if err: die(f"루트의 Open WebUI 로그인 실패: {err} (호스트에서 {PUBLIC_OWUI} 에 닿는지 확인)")
+    log(f"Open WebUI 관리자 로그인: {E['NEW_API_ROOT_USER']} ({E['NEW_API_ROOT_EMAIL']})")
+else:
+    log("NEW_API_ROOT_EMAIL 이 비어 있어 Open WebUI 관리자 로그인을 건너뜀 (먼저 로그인하는 사람이 관리자가 됨)")
+
 st, _, text = http("POST", LOCAL_OWUI + "/api/v1/auths/oauth/oidc/token/exchange", {"token": "bootstrap-probe"})
 if st == 403 and "disabled" in text.lower(): die("Open WebUI 토큰 교환이 꺼져 있습니다 (ENABLE_OAUTH_TOKEN_EXCHANGE)")
 if st == 404: die("Open WebUI 에 oidc provider 가 등록되지 않았습니다")
@@ -227,7 +255,10 @@ log("확인: Open WebUI 토큰 교환 활성")
 
 st, _, text = http("POST", LOCAL_NEWAPI + "/oauth2/token-from-key", None)
 if st == 403 and "feature_disabled" in text: die("new-api 'API 키로 토큰 발급' 기능이 꺼져 있습니다")
-if st == 404: die("new-api 에 /oauth2/token-from-key 가 없습니다 (이미지 버전 확인)")
+if not (st == 401 and '"invalid_key"' in text):
+    # 이 기능이 없는 new-api 는 모르는 경로를 웹 화면(HTML 200)으로 응답한다
+    die(f"new-api /oauth2/token-from-key 응답이 예상과 다릅니다 (HTTP {st}: {text[:120]!r}). "
+        "new-api 이미지가 bf236c829 이후 버전인지 확인하세요")
 log("확인: new-api /oauth2/token-from-key 활성")
 
 r = compose("exec", "-T", "mcp-rag", "python", "/smoke_mcp.py", "sk-bootstrap-probe", check=False, capture=True)
