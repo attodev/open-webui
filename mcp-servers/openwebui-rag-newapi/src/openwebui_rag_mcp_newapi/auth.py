@@ -13,9 +13,17 @@ REFRESH_MARGIN = 60.0
 DEFAULT_TTL = 3600.0
 
 _NEWAPI_ERRORS = {
-    401: "newapi API 키가 유효하지 않습니다",
-    403: "newapi 계정이 비활성화되었습니다",
-    429: "잠시 후 다시 시도하세요",
+    "invalid_key": "newapi API 키가 유효하지 않습니다",
+    "user_disabled": "newapi 계정이 비활성화되었습니다",
+    "email_required": "newapi 계정에 이메일이 없습니다. newapi에서 이메일을 등록하세요",
+    "ip_not_allowed": "newapi API 키의 IP 제한에 MCP 서버 IP가 허용되어 있지 않습니다",
+    "feature_disabled": "newapi 관리자가 'API 키로 토큰 발급' 기능을 켜야 합니다",
+    "rate_limited": "잠시 후 다시 시도하세요",
+}
+_NEWAPI_BY_STATUS = {
+    401: _NEWAPI_ERRORS["invalid_key"],
+    404: "newapi의 OIDC 제공자가 꺼져 있거나 NEWAPI_URL/NEWAPI_TOKEN_PATH가 잘못되었습니다",
+    429: _NEWAPI_ERRORS["rate_limited"],
 }
 _NEWAPI_OTHER = "newapi 인증 서버 오류"
 _NO_TOKEN = (
@@ -37,6 +45,20 @@ def _detail(resp: httpx.Response) -> str:
     except (ValueError, AttributeError):
         return ""
     return d if isinstance(d, str) else str(d)
+
+
+def _newapi_error(resp: httpx.Response) -> AuthError:
+    try:
+        code = resp.json().get("error")
+    except (ValueError, AttributeError):
+        code = None
+    if code in _NEWAPI_ERRORS:
+        return AuthError(_NEWAPI_ERRORS[code])
+    if resp.status_code in _NEWAPI_BY_STATUS:
+        return AuthError(_NEWAPI_BY_STATUS[resp.status_code])
+    if resp.status_code == 403:
+        return AuthError("newapi가 요청을 거부했습니다 (403)")
+    return AuthError(_NEWAPI_OTHER)
 
 
 def _exchange_error(resp: httpx.Response) -> AuthError:
@@ -157,11 +179,18 @@ class TokenBroker:
     async def _fetch(self, api_key: str) -> tuple[str, float]:
         resp = await self._post(self._newapi_url, headers={"Authorization": f"Bearer {api_key}"})
         if resp.status_code != 200:
-            raise AuthError(_NEWAPI_ERRORS.get(resp.status_code, _NEWAPI_OTHER))
+            raise _newapi_error(resp)
         try:
-            access_token = resp.json()["access_token"]
+            body = resp.json()
+            access_token = body["access_token"]
         except (ValueError, KeyError, TypeError):
             raise AuthError(_NEWAPI_OTHER) from None
+        # Never cache longer than the newapi token lives, so a disabled newapi
+        # key or user stops working within that lifetime.
+        try:
+            newapi_expiry = _now() + float(body.get("expires_in") or DEFAULT_TTL)
+        except (TypeError, ValueError):
+            newapi_expiry = _now() + DEFAULT_TTL
 
         resp = await self._post(self._exchange_url, json={"token": access_token})
         if resp.status_code != 200:
@@ -173,9 +202,8 @@ class TokenBroker:
         jwt = data.get("token") if isinstance(data, dict) else None
         if not jwt:
             raise AuthError(_NO_TOKEN)
-        expires_at = data.get("expires_at")
         try:
-            expiry = float(expires_at) if expires_at else _now() + DEFAULT_TTL
-        except (TypeError, ValueError):
-            expiry = _now() + DEFAULT_TTL
-        return jwt, expiry
+            expiry = float(data["expires_at"])
+        except (KeyError, TypeError, ValueError):
+            expiry = newapi_expiry
+        return jwt, min(expiry, newapi_expiry)

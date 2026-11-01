@@ -35,7 +35,7 @@
 - **환경 변수:**
   - `OPENWEBUI_URL` (필수)
   - `NEWAPI_URL` (필수)
-  - `NEWAPI_TOKEN_PATH` (기본 `/api/oidc/token-from-key`)
+  - `NEWAPI_TOKEN_PATH` (기본 `/oauth2/token-from-key`)
   - `OPENWEBUI_OAUTH_PROVIDER` (기본 `oidc`)
   - `NEWAPI_API_KEY` (stdio 모드 전용)
   - `MAX_COLLECTIONS` (기본 20)
@@ -77,3 +77,27 @@
 
 - 캐시 구현 세부(자료구조, 잠금 방식)
 - 기존 코드에서 무엇을 그대로 복사하고 무엇을 다듬을지
+
+## newapi 구현 결과 반영 (2026-11-01)
+
+newapi 회신(`new-api/docs/superpowers/plans/2026-11-01-key-to-oidc-token.md` 4절)에 맞춰 다음을 바꿨다.
+
+- **경로:** `POST {issuer}/oauth2/token-from-key`. `NEWAPI_TOKEN_PATH`의 기본값을 `/oauth2/token-from-key`로 바꿨다. `NEWAPI_URL`에는 issuer 주소를 넣는다.
+- **오류 매핑:** HTTP 상태가 아니라 응답의 `error` 코드로 메시지를 고른다. 403에 여러 의미가 생겼기 때문이다.
+  - `invalid_key` → "newapi API 키가 유효하지 않습니다"
+  - `user_disabled` → "newapi 계정이 비활성화되었습니다"
+  - `email_required` → "newapi 계정에 이메일이 없습니다. newapi에서 이메일을 등록하세요"
+  - `ip_not_allowed` → "newapi API 키의 IP 제한에 MCP 서버 IP가 허용되어 있지 않습니다"
+  - `feature_disabled` → "newapi 관리자가 'API 키로 토큰 발급' 기능을 켜야 합니다"
+  - `rate_limited` → "잠시 후 다시 시도하세요"
+  - 그 밖의 404 → "newapi의 OIDC 제공자가 꺼져 있거나 NEWAPI_URL/NEWAPI_TOKEN_PATH가 잘못되었습니다"
+  - 그 밖의 403 → "newapi가 요청을 거부했습니다 (403)"
+- **캐시 수명 (변경):** 캐시 수명은 이제 `min(Open WebUI expires_at, now + newapi expires_in)`이다. `expires_at`이 없거나 잘못된 값이면 newapi `expires_in`을 쓰고, 그것도 없으면 3600초를 쓴다.
+  - 이유: Open WebUI JWT는 기본 수명이 길다(수 주). 그러면 newapi에서 키나 사용자를 비활성화해도 MCP 캐시의 JWT로 계속 검색할 수 있다. newapi 토큰 수명(기본 600초, 최대 900초)으로 상한을 두면, 비활성화가 늦어도 그 시간 안에 반영된다.
+  - 이 변경은 앞의 "`expires_at`이 없을 때 1시간" 결정을 대체한다.
+- **README 운영 안내 추가:**
+  - `OAUTH_TOKEN_EXCHANGE_TRUSTED_CLIENT_IDS=openwebui-mcp`
+  - newapi 기능 스위치
+  - newapi의 IP당 분당 60회 제한은 MCP 서버 IP 하나에 집중된다.
+  - 키의 AllowIps에는 MCP 서버 IP를 허용해야 한다.
+  - 이메일이 없는 계정은 토큰을 발급받지 못한다.

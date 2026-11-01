@@ -45,7 +45,7 @@ def _get_broker() -> TokenBroker:
         _broker = TokenBroker(
             os.environ["OPENWEBUI_URL"],
             newapi_url,
-            os.environ.get("NEWAPI_TOKEN_PATH", "/api/oidc/token-from-key"),
+            os.environ.get("NEWAPI_TOKEN_PATH", "/oauth2/token-from-key"),
             provider,
         )
     return _broker

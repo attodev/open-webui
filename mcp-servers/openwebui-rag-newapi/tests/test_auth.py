@@ -10,7 +10,7 @@ from openwebui_rag_mcp_newapi.auth import AuthError, TokenBroker
 
 OWUI = "http://owui.test"
 NEWAPI = "http://newapi.test"
-TOKEN_PATH = "/api/oidc/token-from-key"
+TOKEN_PATH = "/oauth2/token-from-key"
 NEWAPI_URL = f"{NEWAPI}{TOKEN_PATH}"
 EXCHANGE_URL = f"{OWUI}/api/v1/auths/oauth/oidc/token/exchange"
 
@@ -61,17 +61,17 @@ async def test_refresh_before_expiry():
 
 
 @respx.mock
-async def test_null_expires_at_uses_3600(monkeypatch):
+async def test_null_expires_at_uses_newapi_expires_in(monkeypatch):
     respx.post(NEWAPI_URL).mock(return_value=newapi_ok())
     e = respx.post(EXCHANGE_URL).mock(return_value=exchange_ok(expires_at=None))
     now = [1_000_000.0]
     monkeypatch.setattr("openwebui_rag_mcp_newapi.auth._now", lambda: now[0])
     b = broker()
     await b.get_jwt("sk-a")
-    now[0] += 3500  # within 3600 - 60
+    now[0] += 500  # within 600 - 60
     await b.get_jwt("sk-a")
     assert e.call_count == 1
-    now[0] += 100  # past 3540
+    now[0] += 100  # past 540
     await b.get_jwt("sk-a")
     assert e.call_count == 2
 
@@ -87,20 +87,43 @@ async def test_concurrent_single_exchange():
 
 
 @pytest.mark.parametrize(
-    "status,msg",
+    "status,code,msg",
     [
-        (401, "newapi API 키가 유효하지 않습니다"),
-        (403, "newapi 계정이 비활성화되었습니다"),
-        (429, "잠시 후 다시 시도하세요"),
-        (500, "newapi 인증 서버 오류"),
+        (401, "invalid_key", "newapi API 키가 유효하지 않습니다"),
+        (403, "user_disabled", "newapi 계정이 비활성화되었습니다"),
+        (403, "email_required", "newapi 계정에 이메일이 없습니다. newapi에서 이메일을 등록하세요"),
+        (403, "ip_not_allowed", "newapi API 키의 IP 제한에 MCP 서버 IP가 허용되어 있지 않습니다"),
+        (403, "feature_disabled", "newapi 관리자가 'API 키로 토큰 발급' 기능을 켜야 합니다"),
+        (429, "rate_limited", "잠시 후 다시 시도하세요"),
+        (404, "oauth2 is not enabled", "newapi의 OIDC 제공자가 꺼져 있거나 NEWAPI_URL/NEWAPI_TOKEN_PATH가 잘못되었습니다"),
+        (403, "unknown", "newapi가 요청을 거부했습니다 (403)"),
+        (500, "x", "newapi 인증 서버 오류"),
     ],
 )
 @respx.mock
-async def test_newapi_errors(status, msg):
-    respx.post(NEWAPI_URL).mock(return_value=httpx.Response(status, json={"error": "x"}))
+async def test_newapi_errors(status, code, msg):
+    respx.post(NEWAPI_URL).mock(return_value=httpx.Response(status, json={"error": code, "message": "m"}))
     with pytest.raises(AuthError) as exc:
         await broker().get_jwt("sk-a")
     assert str(exc.value) == msg
+
+
+@respx.mock
+async def test_cache_capped_by_newapi_expires_in(monkeypatch):
+    """A long-lived Open WebUI JWT is still re-exchanged when the newapi token expires,
+    so a disabled newapi key stops working within its token lifetime."""
+    now = [1_000_000.0]
+    monkeypatch.setattr("openwebui_rag_mcp_newapi.auth._now", lambda: now[0])
+    respx.post(NEWAPI_URL).mock(return_value=newapi_ok())  # expires_in 600
+    e = respx.post(EXCHANGE_URL).mock(return_value=exchange_ok(expires_at=now[0] + 28 * 86400))
+    b = broker()
+    await b.get_jwt("sk-a")
+    now[0] += 500
+    await b.get_jwt("sk-a")
+    assert e.call_count == 1
+    now[0] += 100  # past 600 - 60
+    await b.get_jwt("sk-a")
+    assert e.call_count == 2
 
 
 @respx.mock
