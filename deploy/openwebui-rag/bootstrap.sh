@@ -21,7 +21,7 @@ if [ ! -f .env ]; then
 fi
 
 exec python3 - "$@" <<'PY'
-import json, os, re, secrets, string, subprocess, sys, time
+import base64, json, os, re, secrets, string, subprocess, sys, time
 import urllib.request, urllib.error, urllib.parse
 from http.cookiejar import CookieJar
 
@@ -102,11 +102,12 @@ compose("up", "-d", "--wait", "new-api")
 
 class Session:
     def __init__(self, base):
-        self.base = base; self.user_id = None
+        self.base = base; self.user_id = None; self.bearer = None
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
     def call(self, method, path, body=None):
         headers = {"Content-Type": "application/json"} if body is not None else {}
         if self.user_id is not None: headers["New-Api-User"] = str(self.user_id)
+        if self.bearer: headers["Authorization"] = f"Bearer {self.bearer}"
         req = urllib.request.Request(self.base + path, data=json.dumps(body).encode() if body is not None else None,
                                      method=method, headers=headers)
         try:
@@ -120,6 +121,11 @@ class Session:
         d = j.get("data") or {}
         if d.get("require_2fa"):
             die(f"{user} 계정에 2FA 가 켜져 있어 자동 로그인할 수 없습니다. 2FA 를 끄거나 DB 를 초기화하세요")
+        if "id" not in d and d.get("access_token"):
+            # JWT 로그인을 쓰는 new-api: 세션 쿠키 대신 Bearer 토큰, 사용자 id 는 sub
+            self.bearer = d["access_token"]
+            p = self.bearer.split(".")[1]
+            d = {**d, "id": int(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["sub"])}
         if "id" not in d:
             die(f"new-api 로그인 응답에 사용자 id 가 없습니다: {str(j)[:300]}")
         self.user_id = d["id"]; return True
