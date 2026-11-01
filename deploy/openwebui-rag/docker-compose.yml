@@ -1,29 +1,24 @@
 # Open WebUI ↔ new-api ↔ RAG MCP 전체 스택
 #
-#   new-api(이미지) + PostgreSQL + Redis + Open WebUI + RAG MCP 서버 (+ 선택: mock 업스트림, Open WebUI 키 방식 MCP)
+#   new-api + PostgreSQL + Redis + Open WebUI + RAG MCP 서버 (+ 선택: Open WebUI 키 방식 MCP)
 #
-# new-api 저장소의 deploy/openwebui-test (커밋 bf236c829) 를 바탕으로, MCP 서버를 더한 것이다.
-# new-api 쪽 파일은 수정하지 않고, bootstrap.sh · mock_upstream.py 는 그대로 복사해 왔다.
+# 이 파일은 이미지를 빌드하지 않는다. 필요한 이미지는 미리 받아 두거나 빌드해 둔다 (README 1절).
 #
-# 사용법은 같은 폴더의 README.md. 요약:
-#   1. cp .env.example .env  →  PUBLIC_HOST 와 비밀값들을 채운다
-#   2. docker compose up -d new-api            # DB·Redis·new-api 먼저
-#   3. ./bootstrap.sh                          # new-api 설정 주입, OWUI_SERVICE_KEY 를 .env 에 기록
-#   4. docker compose up -d --build            # Open WebUI + MCP 서버 기동
-#   5. ./bootstrap-rag.sh                      # 임베딩 채널, 테스트 사용자 첫 로그인, 샘플 지식, MCP 확인
-# 위 순서는 ./setup.sh 가 한 번에 한다. 연동이 끝난 뒤 재시작은 docker-compose.run.yml 로 한다.
+#   처음:   cp .env.example .env  →  PUBLIC_HOST·이미지 태그 확인  →  ./bootstrap.sh
+#   이후:   docker compose up -d        (재시작·설정 반영)
+#           docker compose down         (중지, 데이터 유지)
 #
-# 브라우저와 Open WebUI 컨테이너가 new-api 를 **같은 주소**(http://PUBLIC_HOST:3000)로 봐야 한다.
+# 브라우저와 Open WebUI 컨테이너가 new-api 를 **같은 주소**(http://PUBLIC_HOST:NEW_API_PORT)로 봐야 한다.
 
 name: owui-rag-stack
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: ${POSTGRES_IMAGE:-postgres:15-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PG_USER:-newapi}
-      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}
       POSTGRES_DB: ${PG_DB:-newapi}
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -35,9 +30,9 @@ services:
     networks: [owui-rag]
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     restart: unless-stopped
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
       interval: 5s
@@ -59,8 +54,8 @@ services:
     environment:
       - SQL_DSN=postgresql://${PG_USER:-newapi}:${PG_PASSWORD}@postgres:5432/${PG_DB:-newapi}
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD}@redis:6379
-      - SESSION_SECRET=${NEW_API_SESSION_SECRET:?set NEW_API_SESSION_SECRET in .env}
-      - CRYPTO_SECRET=${NEW_API_CRYPTO_SECRET:?set NEW_API_CRYPTO_SECRET in .env}
+      - SESSION_SECRET=${NEW_API_SESSION_SECRET:?NEW_API_SESSION_SECRET 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}
+      - CRYPTO_SECRET=${NEW_API_CRYPTO_SECRET:?NEW_API_CRYPTO_SECRET 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}
       - TZ=${TZ:-Asia/Seoul}
       - ERROR_LOG_ENABLED=true
       - BATCH_UPDATE_ENABLED=true
@@ -93,8 +88,8 @@ services:
     #   - "${PUBLIC_HOST}:host-gateway"
     environment:
       # ---- 기본 ----
-      - WEBUI_URL=http://${PUBLIC_HOST:?set PUBLIC_HOST in .env}:${OPEN_WEBUI_PORT:-8080}
-      - WEBUI_SECRET_KEY=${OWUI_SECRET_KEY:?set OWUI_SECRET_KEY in .env}
+      - WEBUI_URL=http://${PUBLIC_HOST:?PUBLIC_HOST 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}:${OPEN_WEBUI_PORT:-8080}
+      - WEBUI_SECRET_KEY=${OWUI_SECRET_KEY:?OWUI_SECRET_KEY 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}
       - ENABLE_OLLAMA_API=false
       - ENABLE_DIRECT_CONNECTIONS=false
       - ENABLE_SIGNUP=false                 # 비밀번호 가입 금지. 계정은 OIDC 로만 만든다 (relay 이메일 자동 연결의 전제)
@@ -110,7 +105,7 @@ services:
       # ---- 로그인: new-api 내장 OIDC ----
       - OPENID_PROVIDER_URL=http://${PUBLIC_HOST}:${NEW_API_PORT:-3000}/.well-known/openid-configuration
       - OAUTH_CLIENT_ID=${OIDC_CLIENT_ID:-openwebui}
-      - OAUTH_CLIENT_SECRET=${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
+      - OAUTH_CLIENT_SECRET=${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}
       - OPENID_REDIRECT_URI=http://${PUBLIC_HOST}:${OPEN_WEBUI_PORT:-8080}/oauth/oidc/login/callback
       - OAUTH_PROVIDER_NAME=NewAPI
       - OAUTH_SCOPES=openid email profile
@@ -135,11 +130,12 @@ services:
       # ---- relay: 서비스 키 + 서명 JWT ----
       # 모델 호출은 서버 간 통신이라 컨테이너 내부 이름으로 가도 된다.
       - OPENAI_API_BASE_URLS=http://new-api:3000/v1
+      # OWUI_SERVICE_KEY 는 bootstrap.sh 가 new-api 에 서비스 토큰을 만들고 .env 에 적는다
       - OPENAI_API_KEYS=${OWUI_SERVICE_KEY:-}
-      # 배경 태스크 구분 헤더 (new-api README 4절 2번을 환경 변수로)
+      # 배경 태스크(제목·태그 생성 등) 구분 헤더 → new-api 가 openwebui-task 토큰으로 청구
       - 'OPENAI_API_CONFIGS={"0":{"enable":true,"headers":{"X-Task":"{{TASK}}"}}}'
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
-      - FORWARD_USER_INFO_HEADER_JWT_SECRET=${OWUI_JWT_SECRET:?set OWUI_JWT_SECRET in .env}
+      - FORWARD_USER_INFO_HEADER_JWT_SECRET=${OWUI_JWT_SECRET:?OWUI_JWT_SECRET 가 비어 있습니다. 먼저 ./bootstrap.sh 를 실행하세요}
       - FORWARD_USER_INFO_HEADER_JWT_EXPIRES_SECONDS=300
       # RAG/이미지/음성도 new-api 로. (sentence-transformers 모델 다운로드를 피하려고 임베딩을 openai 엔진으로 둔다)
       - RAG_EMBEDDING_ENGINE=openai
@@ -167,8 +163,7 @@ services:
   # 사용자는 MCP 클라이언트에 자기 new-api API 키(sk-...)만 등록한다.
   # 흐름: sk- 키 → new-api /oauth2/token-from-key → Open WebUI 토큰 교환 → Open WebUI JWT 로 지식 검색
   mcp-rag:
-    build: ../../mcp-servers/openwebui-rag-newapi
-    image: openwebui-rag-mcp-newapi:local
+    image: ${MCP_IMAGE:-openwebui-rag-mcp-newapi:latest}
     restart: unless-stopped
     ports:
       # 기본은 이 호스트에서만 접속. 사내망 클라이언트에 열려면 .env 의 MCP_BIND=0.0.0.0 (자체 인증은 Bearer 키뿐이므로 내부망 전용)
@@ -195,8 +190,7 @@ services:
   # 사용자가 Open WebUI 에서 직접 만든 API 키로 인증하는 판. --profile owui-key 로 띄운다.
   # 쓰려면 Open WebUI 에 ENABLE_API_KEYS=true 가 필요하다 (.env 의 OWUI_ENABLE_API_KEYS).
   mcp-rag-owui-key:
-    build: ../../mcp-servers/openwebui-rag
-    image: openwebui-rag-mcp:local
+    image: ${MCP_OWUI_KEY_IMAGE:-openwebui-rag-mcp:latest}
     profiles: ["owui-key"]
     restart: unless-stopped
     ports:
@@ -211,17 +205,6 @@ services:
     depends_on:
       open-webui:
         condition: service_healthy
-    networks: [owui-rag]
-
-  # 실제 공급자 키가 없는 환경용 OpenAI 호환 가짜 업스트림 (모델 mock-gpt).
-  # docker compose --profile mock up -d  로 함께 띄우고, bootstrap.sh 에 MOCK_UPSTREAM=1 을 주면 채널까지 만든다.
-  mock-upstream:
-    image: python:3.12-alpine
-    profiles: ["mock"]
-    restart: unless-stopped
-    volumes:
-      - ./mock_upstream.py:/mock_upstream.py:ro
-    command: ["python3", "/mock_upstream.py"]
     networks: [owui-rag]
 
 volumes:
