@@ -10,6 +10,8 @@
 #   2. docker compose up -d new-api            # DB·Redis·new-api 먼저
 #   3. ./bootstrap.sh                          # new-api 설정 주입, OWUI_SERVICE_KEY 를 .env 에 기록
 #   4. docker compose up -d --build            # Open WebUI + MCP 서버 기동
+#   5. ./bootstrap-rag.sh                      # 임베딩 채널, 테스트 사용자 첫 로그인, 샘플 지식, MCP 확인
+# 위 순서는 ./setup.sh 가 한 번에 한다. 연동이 끝난 뒤 재시작은 docker-compose.run.yml 로 한다.
 #
 # 브라우저와 Open WebUI 컨테이너가 new-api 를 **같은 주소**(http://PUBLIC_HOST:3000)로 봐야 한다.
 
@@ -98,6 +100,13 @@ services:
       - ENABLE_SIGNUP=false                 # 비밀번호 가입 금지. 계정은 OIDC 로만 만든다 (relay 이메일 자동 연결의 전제)
       - ENABLE_LOGIN_FORM=false             # 로그인 폼 숨김 → OAUTH_AUTO_REDIRECT 조건
       - ENABLE_OAUTH_PERSISTENT_CONFIG=false
+      # 설정을 DB 가 아니라 매번 이 환경 변수에서 읽는다. 그래야 .env 를 고치고 재시작하면 반영된다.
+      # (대신 관리자 화면에서 바꾼 설정은 재시작하면 이 값으로 돌아간다. 바꿀 것은 여기/.env 에서 바꾼다)
+      - ENABLE_PERSISTENT_CONFIG=false
+      # 모델 공개 범위: new-api 쪽(사용자 그룹·토큰 모델 제한)으로 관리하므로 Open WebUI 접근 제어는 끈다
+      - BYPASS_MODEL_ACCESS_CONTROL=${OWUI_BYPASS_MODEL_ACCESS_CONTROL:-true}
+      # 일반 사용자도 워크스페이스 → 지식에서 지식 베이스를 만들 수 있게 한다 (Open WebUI 기본값은 관리자만)
+      - USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS=${OWUI_USER_KNOWLEDGE_ACCESS:-true}
       # ---- 로그인: new-api 내장 OIDC ----
       - OPENID_PROVIDER_URL=http://${PUBLIC_HOST}:${NEW_API_PORT:-3000}/.well-known/openid-configuration
       - OAUTH_CLIENT_ID=${OIDC_CLIENT_ID:-openwebui}
@@ -127,6 +136,8 @@ services:
       # 모델 호출은 서버 간 통신이라 컨테이너 내부 이름으로 가도 된다.
       - OPENAI_API_BASE_URLS=http://new-api:3000/v1
       - OPENAI_API_KEYS=${OWUI_SERVICE_KEY:-}
+      # 배경 태스크 구분 헤더 (new-api README 4절 2번을 환경 변수로)
+      - 'OPENAI_API_CONFIGS={"0":{"enable":true,"headers":{"X-Task":"{{TASK}}"}}}'
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       - FORWARD_USER_INFO_HEADER_JWT_SECRET=${OWUI_JWT_SECRET:?set OWUI_JWT_SECRET in .env}
       - FORWARD_USER_INFO_HEADER_JWT_EXPIRES_SECONDS=300
@@ -141,6 +152,12 @@ services:
       - AUDIO_TTS_OPENAI_API_KEY=${OWUI_SERVICE_KEY:-}
       - AUDIO_STT_OPENAI_API_BASE_URL=http://new-api:3000/v1
       - AUDIO_STT_OPENAI_API_KEY=${OWUI_SERVICE_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     depends_on:
       new-api:
         condition: service_healthy
@@ -169,7 +186,7 @@ services:
       - ./smoke_mcp.py:/smoke_mcp.py:ro
     depends_on:
       open-webui:
-        condition: service_started
+        condition: service_healthy
       new-api:
         condition: service_healthy
     networks: [owui-rag]
@@ -193,7 +210,7 @@ services:
       - ./smoke_mcp.py:/smoke_mcp.py:ro
     depends_on:
       open-webui:
-        condition: service_started
+        condition: service_healthy
     networks: [owui-rag]
 
   # 실제 공급자 키가 없는 환경용 OpenAI 호환 가짜 업스트림 (모델 mock-gpt).
